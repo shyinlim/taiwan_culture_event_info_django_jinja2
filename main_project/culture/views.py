@@ -1,9 +1,14 @@
+import urllib3
 import requests
 from django.http import HttpRequest
 from django.shortcuts import render
 from http import HTTPStatus
 from datetime import datetime
 from utility import resp_spec, RespCommonResultCode, RespCommonMsg, logger, log_func
+
+# cloud.culture.tw 的 SSL 憑證缺少 Subject Key Identifier，Python 3.13 會拒絕連線
+# 因為是外部政府 API 無法修改其憑證，所以關閉 SSL 驗證並抑制警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from .data import Location, EventCategory
 
@@ -21,7 +26,8 @@ def _culture_info_process(
         request: HttpRequest, event_category_req: int, location_req: str, date_req: str):
     response = requests.get(
         url="https://cloud.culture.tw/frontsite/trans/SearchShowAction.do",
-        params={"method": "doFindTypeJ", "category": event_category_req}
+        params={"method": "doFindTypeJ", "category": event_category_req},
+        verify=False
     )
 
     if response.status_code == HTTPStatus.OK:
