@@ -146,9 +146,11 @@ GET /health
 - **GitHub Actions** (push master)：pytest + vitest → docker build →
   push Artifact Registry → `gcloud run deploy`。紅燈不部署。
   現有 deploy.yml 整份重寫 (它跑的 per-app pytest 與 `make run-prod` 都會失效)。
-- GCP 一次性手動設定寫成 checklist 由 owner 照做：開專案、綁 billing、
-  enable Cloud Run + Artifact Registry APIs、建 AR docker repo、
-  GitHub Actions 認證建議用 Workload Identity Federation (免長期 SA key)。
+- GCP 一次性 infra 用 **Terraform** 管理 (owner 指定，作為 IaC 學習)：
+  enable APIs、deployer service account + IAM roles、Workload Identity
+  Federation。App 部署不進 Terraform (CI 的 `gcloud run deploy` 負責)；
+  tfstate 存本機並 gitignore。手動步驟只剩：開專案、綁 billing、
+  填 GitHub Actions variables、首次部署驗證 (寫成 checklist)。
 - **遷移順序**：Cloud Run 上線並驗證後，才下線 Fly.io app，不空窗。
 
 ## 6. 清理清單
@@ -177,8 +179,9 @@ GET /health
   新增 CorrelationIdMiddleware 每個 request 設 correlation id +
   回 `X-Request-ID` header，取代原 `utility/logger.py` + `culture/middleware.py`。
   `utility/` 於 M4 隨舊 apps 一併刪除。
-- HTTP 請求：toolkitsy 尚無 http 模組，暫用 `requests` 並集中在 provider 檔案；
-  未來 toolkitsy 提供時單檔替換。
+- HTTP 請求：toolkitsy 尚無 http 模組 (owner 計畫在 toolkitsy repo 開發)。
+  本重構不等它：暫用 `requests` 並集中在 provider 檔案；toolkitsy 發版後
+  單檔替換 (若執行時已發版，Task 2 直接採用)。
 
 ## 7. 測試策略
 

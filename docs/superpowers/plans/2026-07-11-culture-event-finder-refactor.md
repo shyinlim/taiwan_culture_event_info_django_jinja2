@@ -8,13 +8,13 @@
 
 **Architecture:** Backend layering views (HTTP) → services (cache + filter/sort) → providers (external data source per country). Frontend is a static Vite build served by the same Django container via WhiteNoise. No react-router, no DB reliance, no CORS.
 
-**Tech Stack:** Django 5.2 LTS, uv (dependency mgmt), toolkitsy (logging), requests, pytest + pytest-django + responses; Vite + React + TypeScript + Tailwind v4 + Vitest; Docker multi-stage; Cloud Run + GitHub Actions (WIF). No Terraform — infra is one service + one-time setup; a Terraform port is an optional future exercise, out of scope.
+**Tech Stack:** Django 5.2 LTS, uv (dependency mgmt), toolkitsy (logging), requests, pytest + pytest-django + responses; Vite + React + TypeScript + Tailwind v4 + Vitest; Docker multi-stage; Cloud Run + GitHub Actions (WIF); **Terraform** for one-time GCP infra (APIs/SA/IAM/WIF — owner wants to learn IaC on a small safe surface). App deploys stay in CI via `gcloud run deploy`, NOT in Terraform.
 
 ## Global Constraints
 
 - Dependency source of truth: `pyproject.toml` (PEP 621) + `uv.lock` via **uv**. Never edit requirements.txt (it gets deleted).
 - Logging: **only** `toolkitsy.logger` in new code (`logger`, `configure`, `set_correlation_id`). No `print`, no `utility.logger` in new code.
-- HTTP calls to external APIs: `requests`, confined to `events/providers/taiwan.py` only (so a future `toolkitsy` http module is a one-file swap).
+- HTTP calls to external APIs: `requests`, confined to `events/providers/taiwan.py` only. The owner plans an http module for `toolkitsy` (separate repo) — if `toolkitsy` ships one before Task 2 executes, use it there instead of `requests` (keep the same `UpstreamError` mapping and tests); otherwise implement as written and swap that one file later.
 - API error body shape everywhere: `{"error": {"code": "...", "message": "..."}}`.
 - API month param is ISO `YYYY-MM`. MoC upstream time format is `YYYY/MM/DD HH:MM:SS`.
 - Code must stay simple (owner is entry-level-readable standard): no Redux, no react-router, no fancy generics, small files.
@@ -1608,66 +1608,192 @@ git add Dockerfile .dockerignore main_project/main_project/urls.py main_project/
 git commit -m "feat: single-container production build (spa + api) honoring cloud run port"
 ```
 
-### Task 11: GCP one-time setup (OWNER MANUAL — write checklist, owner executes)
+### Task 11: GCP one-time infra via Terraform (OWNER runs apply)
+
+Terraform manages the one-time infra (API enablement, deployer service account + IAM, Workload Identity Federation). App deploys stay in CI (`gcloud run deploy`) — do NOT put the Cloud Run service revision into Terraform. Local tfstate (gitignored) — single-owner project; migrating state to a GCS bucket is a future exercise.
 
 **Files:**
-- Create: `docs/deployment/gcp-setup.md`
+- Create: `terraform/main.tf`, `terraform/variables.tf`, `terraform/outputs.tf`, `terraform/terraform.tfvars.example`, `docs/deployment/gcp-setup.md`
+- Modify: `.gitignore` (add Terraform entries)
 
-- [ ] **Step 1: Write `docs/deployment/gcp-setup.md`** containing exactly:
+- [ ] **Step 1: `terraform/variables.tf`**
+
+```hcl
+variable "project_id" {
+  description = "GCP project id (create the project + billing manually first)"
+  type        = string
+}
+
+variable "region" {
+  description = "Cloud Run region"
+  type        = string
+  default     = "asia-east1" # 台灣機房
+}
+
+variable "github_repo" {
+  description = "GitHub repo allowed to deploy, e.g. taurus5650/culture-event-finder"
+  type        = string
+}
+```
+
+- [ ] **Step 2: `terraform/main.tf`**
+
+```hcl
+terraform {
+  required_version = ">= 1.9"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.0"
+    }
+  }
+  # Local state (terraform.tfstate, gitignored) — fine for a single owner.
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+# Enable the APIs this project needs
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "run.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "iamcredentials.googleapis.com",
+  ])
+  service            = each.value
+  disable_on_destroy = false
+}
+
+# Service account GitHub Actions deploys as
+resource "google_service_account" "deployer" {
+  account_id   = "github-deployer"
+  display_name = "GitHub Actions deployer"
+}
+
+resource "google_project_iam_member" "deployer_roles" {
+  for_each = toset([
+    "roles/run.admin",
+    "roles/cloudbuild.builds.editor",
+    "roles/artifactregistry.admin",
+    "roles/storage.admin",
+    "roles/iam.serviceAccountUser",
+    "roles/serviceusage.serviceUsageConsumer",
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# Workload Identity Federation — keyless auth for GitHub Actions
+resource "google_iam_workload_identity_pool" "github" {
+  workload_identity_pool_id = "github"
+  depends_on                = [google_project_service.apis]
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_oidc" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-oidc"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "assertion.repository == \"${var.github_repo}\""
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+resource "google_service_account_iam_member" "wif_binding" {
+  service_account_id = google_service_account.deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
+}
+```
+
+- [ ] **Step 3: `terraform/outputs.tf`**
+
+```hcl
+output "gcp_sa_email" {
+  description = "Set as GitHub Actions variable GCP_SA_EMAIL"
+  value       = google_service_account.deployer.email
+}
+
+output "gcp_wif_provider" {
+  description = "Set as GitHub Actions variable GCP_WIF_PROVIDER"
+  value       = google_iam_workload_identity_pool_provider.github_oidc.name
+}
+```
+
+- [ ] **Step 4: `terraform/terraform.tfvars.example`**
+
+```hcl
+project_id  = "culture-event-finder-<suffix>"
+github_repo = "taurus5650/culture-event-finder"
+```
+
+Append to `.gitignore`:
+
+```
+terraform/.terraform/
+terraform/terraform.tfstate*
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+```
+
+- [ ] **Step 5: Write `docs/deployment/gcp-setup.md`**
 
 ```markdown
 # GCP 一次性設定 (owner 手動執行一次)
 
-前置：安裝 gcloud CLI (`brew install google-cloud-sdk`)，準備一張信用卡。
-不用 Terraform — infra 只有一個 Cloud Run service；想練 IaC 可日後把本檔改寫成 Terraform (optional)。
+前置：`brew install google-cloud-sdk terraform`，準備一張信用卡。
+分工：Terraform 管一次性 infra (API/SA/IAM/WIF)；app 的每次部署走 CI 的
+`gcloud run deploy`，不進 Terraform。tfstate 存本機 (已 gitignore)。
 
-1. 登入並建立專案 (PROJECT_ID 需全球唯一，自行替換後綴):
+1. 登入並建立專案 (PROJECT_ID 需全球唯一):
    gcloud auth login
+   gcloud auth application-default login   # Terraform 用這組憑證
    gcloud projects create culture-event-finder-<suffix> --set-as-default
 2. 在 https://console.cloud.google.com/billing 綁定 billing account 到此專案。
-3. 啟用 API:
-   gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
-     artifactregistry.googleapis.com iamcredentials.googleapis.com
-4. 建 deploy 用 service account:
-   gcloud iam service-accounts create github-deployer
-   PROJECT_ID=$(gcloud config get-value project)
-   for ROLE in roles/run.admin roles/cloudbuild.builds.editor \
-       roles/artifactregistry.admin roles/storage.admin \
-       roles/iam.serviceAccountUser roles/serviceusage.serviceUsageConsumer; do
-     gcloud projects add-iam-policy-binding $PROJECT_ID \
-       --member="serviceAccount:github-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
-       --role="$ROLE"
-   done
-5. Workload Identity Federation (GitHub Actions 免長期金鑰；GITHUB_REPO 例如 taurus5650/culture-event-finder):
-   gcloud iam workload-identity-pools create github --location=global
-   gcloud iam workload-identity-pools providers create-oidc github-oidc \
-     --location=global --workload-identity-pool=github \
-     --issuer-uri="https://token.actions.githubusercontent.com" \
-     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-     --attribute-condition="assertion.repository=='<GITHUB_REPO>'"
-   PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
-   gcloud iam service-accounts add-iam-policy-binding \
-     github-deployer@$PROJECT_ID.iam.gserviceaccount.com \
-     --role=roles/iam.workloadIdentityUser \
-     --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/<GITHUB_REPO>"
-6. GitHub repo → Settings → Secrets and variables → Actions → Variables，新增:
+3. 跑 Terraform:
+   cd terraform
+   cp terraform.tfvars.example terraform.tfvars   # 填入實際 project_id / github_repo
+   terraform init
+   terraform plan     # 先看它要建什麼 — 學習重點在這步
+   terraform apply    # yes
+4. 把 terraform 的 output 填進 GitHub repo → Settings → Secrets and variables
+   → Actions → Variables:
    GCP_PROJECT_ID   = <PROJECT_ID>
-   GCP_REGION       = asia-east1        # 台灣機房
-   GCP_SA_EMAIL     = github-deployer@<PROJECT_ID>.iam.gserviceaccount.com
-   GCP_WIF_PROVIDER = projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github-oidc
-7. 手動驗證部署一次 (repo root):
+   GCP_REGION       = asia-east1
+   GCP_SA_EMAIL     = (output: gcp_sa_email)
+   GCP_WIF_PROVIDER = (output: gcp_wif_provider)
+5. 手動驗證部署一次 (repo root):
    gcloud run deploy culture-event-finder --source . --region asia-east1 \
      --allow-unauthenticated --memory 512Mi --min-instances 0
    完成後開啟 terminal 顯示的 https://culture-event-finder-*.run.app，應看到 SPA。
+
+日後想改 infra (加 role、換 repo 名)：改 .tf 檔 → terraform plan → apply。
+未來練習題 (optional)：把 tfstate 搬到 GCS backend。
 ```
 
-- [ ] **Step 2: Commit, then STOP for the owner**
+- [ ] **Step 6: Validate config without touching GCP**
 
 ```bash
-git add docs/deployment/gcp-setup.md && git commit -m "docs: add gcp one-time setup checklist"
+cd terraform && terraform init -backend=false && terraform validate
 ```
 
-**PAUSE POINT:** the owner must complete the checklist (especially step 7 succeeding) before Task 12.
+Expected: `Success! The configuration is valid.`
+
+- [ ] **Step 7: Commit, then STOP for the owner**
+
+```bash
+git add terraform docs/deployment/gcp-setup.md .gitignore
+git commit -m "feat: add terraform for gcp one-time infra (apis, sa, wif)"
+```
+
+**PAUSE POINT:** the owner must complete `docs/deployment/gcp-setup.md` (especially step 5 succeeding) before Task 12.
 
 ### Task 12: GitHub Actions rewrite
 
@@ -2062,6 +2188,6 @@ Optionally rename the local folder (outside any running session): `mv taiwan_cul
 ## Self-Review Record (kept for the executor)
 
 - Spec coverage: §2 repo structure → T15; §3.1 API → T4; §3.2 providers → T2; §3.3 cache + month conversion → T3; §4 frontend/i18n/no-router → T5–T9; §5 Dockerfile/uv/WhiteNoise/ALLOWED_HOSTS/dev-proxy/CI/GCP checklist → T10–T12 + makefile in T15; §6 cleanup/replace (toolkitsy) → T1, T4, T14–T16; §7 tests → T2–T4, T6, T15; §8 milestones → task ordering.
-- Intentional deviations from spec text: Dockerfile at repo root (not `deployment/`) because `gcloud run deploy --source` requires it there; `/health` route lands at T15 (T10–T13 keep legacy `/health_check/`); no Terraform (owner asked — one-time gcloud checklist is proportionate; Terraform port listed as optional future exercise).
+- Intentional deviations from spec text: Dockerfile at repo root (not `deployment/`) because `gcloud run deploy --source` requires it there; `/health` route lands at T15 (T10–T13 keep legacy `/health_check/`); one-time GCP infra is Terraform-managed per owner request (T11) — app deploys stay in CI, local tfstate gitignored.
 - The `settings.py` Read-block workaround (Bash snippets in T4/T10/T14) ends at T15 when the file is rewritten fresh.
 - toolkitsy has no http module yet (verified on PyPI 0.1.0) — external HTTP stays on `requests`, isolated in `taiwan.py` for a future one-file swap.
