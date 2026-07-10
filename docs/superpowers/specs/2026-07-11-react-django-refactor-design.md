@@ -96,6 +96,9 @@ GET /health
 
 - 用 Django cache framework (`django.core.cache`)，業務 code 只碰 `cache.get/set`。
 - Key：`events:{country}:{category}`；TTL：12 小時。
+- **月份格式轉換 (必做)**：API 收 ISO `month=2026-07`，但 MoC 的 `show['time']`
+  是 `YYYY/MM/DD HH:MM:SS`。services 層過濾前必須把 `2026-07` 轉成 `2026/07`
+  再比對，否則永遠查無結果。此轉換屬台灣 provider 的資料格式知識，測試必須涵蓋。
 - MoC API 只按 category 查詢 (location/月份是本地過濾)，故全站每 12 小時
   最多打 12 次上游 (12 個 category)，跨 user 共用。
 - Backend 現階段用 LocMemCache。已知限制：Cloud Run scale-to-zero 時 cache
@@ -109,6 +112,9 @@ GET /health
 - **Tailwind CSS**：mobile-first utility。
 - **i18n**：UI 文案走 `locales/zh.json` / `en.json` + 一個輕量 context/hook
   (不引重型 i18n 套件)，右上角切換，預設中文。活動資料維持資料源語言。
+- **不用 react-router**：只有搜尋頁和 About 兩個畫面，用 in-app state 切換。
+  這同時避開 SPA fallback routing 問題 (WhiteNoise 不會把未知路徑 catch-all
+  到 index.html，BrowserRouter 重新整理會 404)。
 - 頁面結構：
   - 搜尋列：國家 (只有台灣時隱藏)、地區、類別、`<input type="month">` 月份選擇器、搜尋鈕
   - 結果：卡片式列表 — 活動名稱、時間、地點 (點擊開 Google Map)、票價、
@@ -123,11 +129,26 @@ GET /health
 - **Multi-stage Dockerfile**：
   stage 1 (node) `vite build` → stage 2 (python slim) Django + gunicorn，
   WhiteNoise 服務 React build 產物 + `/api` JSON。單一 container、單一網址、無 CORS。
+  - 新增依賴：`gunicorn`、`whitenoise` (現有 requirements 皆無)。
+  - CMD 用 `gunicorn config.wsgi --bind 0.0.0.0:$PORT` — Cloud Run 注入
+    `$PORT` (預設 8080)，不可 hardcode 現在的 8787。
+  - Python stage 需跑 `collectstatic`；`STATICFILES_DIRS` 指向 `frontend/dist`。
+  - WhiteNoise 用 plain storage (非 manifest storage)：Vite 已對檔名做
+    content-hash，manifest storage 會重複 hash 且可能 500。
+  - `ALLOWED_HOSTS` 需含 `*.run.app` (用環境變數設定)，否則 Django 回 400。
+- **依賴管理單一來源**：Poetry (`pyproject.toml` + lock) 是 source of truth；
+  Dockerfile 用 `pip install poetry && poetry install --only main --no-root`
+  安裝，刪除 `requirements.txt` 消除 split-brain。
+- **本地開發流程**：dev 是兩個 process — Vite dev server (HMR) 用
+  `server.proxy` 把 `/api` 轉發到 Django `:8000`；單一 container 只在 prod。
+  makefile targets 隨之改寫 (`run-dev` 起兩個 process)。
 - **Cloud Run**：scale-to-zero、min instances 0，落在 always-free 額度內 ($0)。
 - **GitHub Actions** (push master)：pytest + vitest → docker build →
   push Artifact Registry → `gcloud run deploy`。紅燈不部署。
-- GCP 一次性手動設定 (開專案、綁 billing、建 service account、給 GitHub secret)
-  寫成 checklist 由 owner 照做。
+  現有 deploy.yml 整份重寫 (它跑的 per-app pytest 與 `make run-prod` 都會失效)。
+- GCP 一次性手動設定寫成 checklist 由 owner 照做：開專案、綁 billing、
+  enable Cloud Run + Artifact Registry APIs、建 AR docker repo、
+  GitHub Actions 認證建議用 Workload Identity Federation (免長期 SA key)。
 - **遷移順序**：Cloud Run 上線並驗證後，才下線 Fly.io app，不空窗。
 
 ## 6. 清理清單
@@ -140,7 +161,8 @@ GET /health
   breadcrumb、fixed-plugin configurator)
 - Select2 / FontAwesome / Google Fonts 等 CDN 依賴
 - `tech_stack` app (內容併入前端 About 頁)
-- Fly.io 相關設定 (fly.toml、deploy.yml 的 Fly 步驟) — 於遷移完成後
+- `requirements.txt` (Poetry 為單一依賴來源，見 §5)
+- Fly.io 相關設定 (fly.toml、deploy.yml 的 Fly 步驟、docker-compose-prod) — 於遷移完成後
 
 保留：
 
@@ -162,6 +184,7 @@ GET /health
 每個里程碑結束都是可部署狀態：
 
 1. **後端重構** — providers/services/API + 完整測試；舊 Jinja2 頁面暫時共存
+   (共存期間不得移除 tech_stack 模板與 handler404 依賴的模板，避免舊頁面壞掉)
 2. **React 前端** — Vite + TS + Tailwind，打新 API
 3. **合體部署** — multi-stage Dockerfile、Cloud Run 上線、CI/CD 切換、Fly.io 下線
 4. **收尾** — 清理清單執行、repo 改名、README 重寫
@@ -169,6 +192,8 @@ GET /health
 ## 9. 風險與已知取捨
 
 - Cloud Run 冷啟動 2-10 秒 (低流量下常見) — 可接受，前端有 loading 回饋。
+  注意冷啟動與 LocMemCache 清空同時發生：每次閒置後的第一次搜尋 = 冷啟動 +
+  cache miss。若實際體感太差，再考慮 min-instances=1 (會開始產生小額費用)。
 - LocMemCache 不跨 instance、不耐重啟 — 已知，見 §3.3 升級路徑。
 - MoC API 無 SLA、憑證有問題 — provider 層隔離，錯誤有明確 UX。
 - Owner 首次寫 React/TS — code 難度刻意壓低，元件小而少 (約 6 個)。
