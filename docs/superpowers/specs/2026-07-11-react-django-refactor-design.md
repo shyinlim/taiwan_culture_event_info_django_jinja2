@@ -136,9 +136,9 @@ GET /health
   - WhiteNoise 用 plain storage (非 manifest storage)：Vite 已對檔名做
     content-hash，manifest storage 會重複 hash 且可能 500。
   - `ALLOWED_HOSTS` 需含 `*.run.app` (用環境變數設定)，否則 Django 回 400。
-- **依賴管理單一來源**：Poetry (`pyproject.toml` + lock) 是 source of truth；
-  Dockerfile 用 `pip install poetry && poetry install --only main --no-root`
-  安裝，刪除 `requirements.txt` 消除 split-brain。
+- **依賴管理單一來源：uv** (owner 指定)。`pyproject.toml` (PEP 621) + `uv.lock`
+  是 source of truth；Dockerfile 用 `uv sync --frozen --no-dev`。
+  刪除 `requirements.txt` 與 Poetry 設定，消除 split-brain。
 - **本地開發流程**：dev 是兩個 process — Vite dev server (HMR) 用
   `server.proxy` 把 `/api` 轉發到 Django `:8000`；單一 container 只在 prod。
   makefile targets 隨之改寫 (`run-dev` 起兩個 process)。
@@ -167,8 +167,18 @@ GET /health
 保留：
 
 - `health_check` (改為 `health/`，Cloud Run 需要)
-- `utility/logger.py` 的 request_id logging (好東西，遷入 backend)
 - SSL workaround (封裝進 provider)
+
+替換：
+
+- **Logging 改用 owner 自有套件 `toolkitsy` (PyPI 0.1.0)**：
+  `from toolkitsy.logger import logger, configure, set_correlation_id`。
+  settings 啟動時 `configure()` (console only，Cloud Run 收 stdout)；
+  新增 CorrelationIdMiddleware 每個 request 設 correlation id +
+  回 `X-Request-ID` header，取代原 `utility/logger.py` + `culture/middleware.py`。
+  `utility/` 於 M4 隨舊 apps 一併刪除。
+- HTTP 請求：toolkitsy 尚無 http 模組，暫用 `requests` 並集中在 provider 檔案；
+  未來 toolkitsy 提供時單檔替換。
 
 ## 7. 測試策略
 
