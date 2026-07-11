@@ -103,7 +103,7 @@ git commit -m "chore: migrate dependency management from poetry to uv, add toolk
 - Create: `main_project/events/tests/__init__.py` (empty), `main_project/events/tests/test_providers.py`
 
 **Interfaces:**
-- Produces: `Event` dataclass (`title: str, start_time: datetime, end_time: str|None, location: str, location_name: str|None, on_sales: str|None, price: str|None`); `UpstreamError(Exception)`; `BaseProvider` with `code/name/locations/categories` attrs + `fetch_events(category_id: int) -> list[Event]`; `PROVIDERS: dict[str, BaseProvider]` and `get_provider(code) -> BaseProvider` (raises `KeyError`) in `events.providers`.
+- Produces: `Event` dataclass (`title: str, start_time: datetime, end_time: datetime|None, location: str, location_name: str|None, on_sales: str|None, price: str|None`); `UpstreamError(Exception)`; `BaseProvider` with `code/name/locations/categories` attrs + `fetch_events(category_id: int) -> list[Event]`; `PROVIDERS: dict[str, BaseProvider]` and `get_provider(code) -> BaseProvider` (raises `KeyError`) in `events.providers`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -222,7 +222,7 @@ class UpstreamError(Exception):
 class Event:
     title: str
     start_time: datetime
-    end_time: str | None
+    end_time: datetime | None
     location: str
     location_name: str | None
     on_sales: str | None
@@ -321,10 +321,19 @@ class TaiwanProvider(BaseProvider):
         if not location:
             logger.warning(f"Skip show without location ({title})")
             return None
+        # endTime 與 time 同為 MoC 的 YYYY/MM/DD HH:MM:SS；一併轉 datetime，讓 API 的
+        # startTime/endTime 格式一致 (皆 ISO 8601)。缺漏/格式異常 → None，不讓整筆掉。
+        end_raw = show.get("endTime")
+        end_time = None
+        if end_raw:
+            try:
+                end_time = datetime.strptime(end_raw, TIME_FORMAT)
+            except (TypeError, ValueError):
+                logger.warning(f"Bad endTime {end_raw!r} ({title})")
         return Event(
             title=title,
             start_time=start_time,
-            end_time=show.get("endTime"),
+            end_time=end_time,
             location=location,
             location_name=show.get("locationName"),
             on_sales=show.get("onSales"),
@@ -520,7 +529,7 @@ from events.providers.base import Event, UpstreamError
 def _fake_events():
     return [Event(
         title="模擬音樂會", start_time=datetime(2026, 7, 12, 19, 30),
-        end_time="2026/07/12 21:30:00", location="臺北市中正區中山南路21-1號",
+        end_time=datetime(2026, 7, 12, 21, 30), location="臺北市中正區中山南路21-1號",
         location_name="國家音樂廳", on_sales="Y", price="500",
     )]
 
@@ -614,7 +623,7 @@ def _event_to_json(event: Event) -> dict:
     return {
         "title": event.title,
         "startTime": event.start_time.isoformat(),
-        "endTime": event.end_time,
+        "endTime": event.end_time.isoformat() if event.end_time else None,
         "location": event.location,
         "locationName": event.location_name,
         "onSales": event.on_sales,
@@ -1236,6 +1245,13 @@ interface Props {
 const selectClass =
   "mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none";
 
+// 月份選擇器用年 + 月兩個 <select>，不用 <input type="month">：
+// 桌面版 Firefox / Safari 全版本不支援 month picker，會 fallback 成純文字框。
+// value.month 的格式維持 "YYYY-MM" 不變，api.ts / 後端都不用改。
+const NOW = new Date();
+const YEARS = [NOW.getFullYear(), NOW.getFullYear() + 1].map(String);
+const MONTHS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+
 export default function SearchForm({ countries, value, onChange, onSubmit, loading }: Props) {
   const t = useT();
   const { lang } = useLang();
@@ -1286,12 +1302,26 @@ export default function SearchForm({ countries, value, onChange, onSubmit, loadi
       </label>
       <label className="block text-sm text-gray-600">
         {t("search.month")}
-        <input
-          type="month"
-          className={selectClass}
-          value={value.month}
-          onChange={(e) => onChange({ ...value, month: e.target.value })}
-        />
+        <div className="mt-1 flex gap-2">
+          <select
+            className={selectClass}
+            value={value.month.slice(0, 4)}
+            onChange={(e) => onChange({ ...value, month: `${e.target.value}-${value.month.slice(5, 7)}` })}
+          >
+            {YEARS.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            className={selectClass}
+            value={value.month.slice(5, 7)}
+            onChange={(e) => onChange({ ...value, month: `${value.month.slice(0, 4)}-${e.target.value}` })}
+          >
+            {MONTHS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
       </label>
       <div className="flex items-end">
         <button
@@ -1560,7 +1590,9 @@ RUN npm run build
 
 # ---- Stage 2: Django + gunicorn (serves SPA via WhiteNoise) ----
 FROM python:3.13-slim
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# 釘特定 uv 版本，勿用 :latest — 其餘依賴都靠 uv.lock 釘死，uv binary 也要可重現。
+# 部署前上 https://github.com/astral-sh/uv/releases 確認當前版號後填入。
+COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /uvx /bin/
 ENV PYTHONUNBUFFERED=1 TZ=Asia/Taipei PATH="/web/.venv/bin:$PATH"
 WORKDIR /web
 COPY pyproject.toml uv.lock ./
@@ -1570,7 +1602,10 @@ COPY --from=frontend /app/dist ./frontend/dist
 RUN python main_project/manage.py collectstatic --noinput
 # Cloud Run injects $PORT (defaults to 8080)
 CMD exec gunicorn --chdir main_project main_project.wsgi:application \
-    --bind 0.0.0.0:${PORT:-8080} --workers 2
+    --bind 0.0.0.0:${PORT:-8080} --workers 1
+# --workers 1：LocMemCache 是 per-process，多 worker 會各自持有獨立 cache，
+# 讓 §3.3 的「跨 user 共用、12h 最多 12 次上游」假設破功。單 worker + Cloud Run
+# 預設 concurrency 80，對 owner+朋友的低流量綽綽有餘。
 ```
 
 Root `.dockerignore`:
@@ -1634,6 +1669,11 @@ variable "github_repo" {
   description = "GitHub repo allowed to deploy, e.g. taurus5650/culture-event-finder"
   type        = string
 }
+
+variable "billing_account" {
+  description = "Billing account id for the budget alert. Find via `gcloud billing accounts list`."
+  type        = string
+}
 ```
 
 - [ ] **Step 2: `terraform/main.tf`**
@@ -1662,6 +1702,7 @@ resource "google_project_service" "apis" {
     "cloudbuild.googleapis.com",
     "artifactregistry.googleapis.com",
     "iamcredentials.googleapis.com",
+    "billingbudgets.googleapis.com",   # budget alert (見下方 google_billing_budget)
   ])
   service            = each.value
   disable_on_destroy = false
@@ -1674,11 +1715,13 @@ resource "google_service_account" "deployer" {
 }
 
 resource "google_project_iam_member" "deployer_roles" {
+  # 最小權限：deployer 只需推 image + 部署 Cloud Run，不給 project 全域 *.admin，
+  # 縮小 WIF token 或 CI 被盜時的 blast radius。
   for_each = toset([
     "roles/run.admin",
     "roles/cloudbuild.builds.editor",
-    "roles/artifactregistry.admin",
-    "roles/storage.admin",
+    "roles/artifactregistry.writer",       # 推/拉 image 足夠，非 admin
+    "roles/storage.objectAdmin",           # 僅物件層級 (Cloud Build staging bucket)，非整專案 bucket admin
     "roles/iam.serviceAccountUser",
     "roles/serviceusage.serviceUsageConsumer",
   ])
@@ -1711,6 +1754,24 @@ resource "google_service_account_iam_member" "wif_binding" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
+
+# 預算警示：公開 --allow-unauthenticated 端點若被爬爆超出 always-free，會開始計費。
+# 達門檻時寄 email 通知 (只提醒，不會自動關服務)。目標 $0，故門檻設很低。
+resource "google_billing_budget" "monthly" {
+  billing_account = var.billing_account
+  display_name    = "culture-event-finder monthly"
+  budget_filter {
+    projects = ["projects/${var.project_id}"]
+  }
+  amount {
+    specified_amount {
+      currency_code = "USD"
+      units         = "5" # 當「不該花到錢」的早期警報線
+    }
+  }
+  threshold_rules { threshold_percent = 0.5 }
+  threshold_rules { threshold_percent = 1.0 }
+}
 ```
 
 - [ ] **Step 3: `terraform/outputs.tf`**
@@ -1730,8 +1791,9 @@ output "gcp_wif_provider" {
 - [ ] **Step 4: `terraform/terraform.tfvars.example`**
 
 ```hcl
-project_id  = "culture-event-finder-<suffix>"
-github_repo = "taurus5650/culture-event-finder"
+project_id      = "culture-event-finder-<suffix>"
+github_repo     = "taurus5650/culture-event-finder"
+billing_account = "XXXXXX-XXXXXX-XXXXXX"  # gcloud billing accounts list
 ```
 
 Append to `.gitignore`:
@@ -1759,7 +1821,7 @@ terraform/.terraform.lock.hcl
 2. 在 https://console.cloud.google.com/billing 綁定 billing account 到此專案。
 3. 跑 Terraform:
    cd terraform
-   cp terraform.tfvars.example terraform.tfvars   # 填入實際 project_id / github_repo
+   cp terraform.tfvars.example terraform.tfvars   # 填入實際 project_id / github_repo / billing_account
    terraform init
    terraform plan     # 先看它要建什麼 — 學習重點在這步
    terraform apply    # yes
@@ -1771,7 +1833,7 @@ terraform/.terraform.lock.hcl
    GCP_WIF_PROVIDER = (output: gcp_wif_provider)
 5. 手動驗證部署一次 (repo root):
    gcloud run deploy culture-event-finder --source . --region asia-east1 \
-     --allow-unauthenticated --memory 512Mi --min-instances 0
+     --allow-unauthenticated --memory 512Mi --min-instances 0 --max-instances 1
    完成後開啟 terminal 顯示的 https://culture-event-finder-*.run.app，應看到 SPA。
 
 日後想改 infra (加 role、換 repo 名)：改 .tf 檔 → terraform plan → apply。
@@ -1834,9 +1896,25 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: cd frontend && npm ci && npm test && npm run build
 
+  # 合體 container 煙測：test-backend (無 frontend/dist，TEMPLATES DIRS 空)
+  # 與 test-frontend (只有 vitest) 都跑不到「collectstatic + WhiteNoise 服務 SPA + /api」
+  # 一起動的路徑。這個 job 用真的 docker build 起 container 打幾個關鍵 route，
+  # 擋掉壞掉的 revision 直接吃 100% 流量。/api/v1/countries 只回 provider metadata、
+  # 不打 MoC，CI 內安全。
+  build-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t smoke:latest .
+      - run: docker run -d -p 8080:8080 -e PORT=8080 -e ALLOWED_HOSTS='*' --name smoke smoke:latest
+      - run: |
+          for i in $(seq 1 15); do curl -sf http://localhost:8080/health && break || sleep 2; done
+          curl -sf http://localhost:8080/ | grep -qi 'id="root"' || (echo "SPA index missing" && exit 1)
+          curl -sf http://localhost:8080/api/v1/countries | grep -q '"tw"' || (echo "countries API broken" && exit 1)
+
   deploy:
     if: github.ref == 'refs/heads/master'
-    needs: [test-backend, test-frontend]
+    needs: [test-backend, test-frontend, build-smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1850,7 +1928,7 @@ jobs:
             --source . \
             --project ${{ vars.GCP_PROJECT_ID }} \
             --region ${{ vars.GCP_REGION }} \
-            --allow-unauthenticated --memory 512Mi --min-instances 0
+            --allow-unauthenticated --memory 512Mi --min-instances 0 --max-instances 1
 ```
 
 - [ ] **Step 2: Commit and verify CI on the PR**
@@ -2074,7 +2152,7 @@ class HealthConfig(AppConfig):
 
 - `backend/manage.py`, `backend/config/wsgi.py`, `backend/config/asgi.py`: `main_project.settings` → `config.settings`.
 - `backend/pytest.ini`: `DJANGO_SETTINGS_MODULE = config.settings`
-- `Dockerfile`: `COPY main_project/ ./main_project/` → `COPY backend/ ./backend/`; collectstatic path → `backend/manage.py`; CMD → `gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:${PORT:-8080} --workers 2`
+- `Dockerfile`: `COPY main_project/ ./main_project/` → `COPY backend/ ./backend/`; collectstatic path → `backend/manage.py`; CMD → `gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:${PORT:-8080} --workers 1`
 - `.github/workflows/deploy.yml`: `cd main_project` → `cd backend`
 - Rewrite `makefile` entirely:
 

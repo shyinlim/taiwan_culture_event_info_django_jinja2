@@ -99,8 +99,12 @@ GET /health
 - **月份格式轉換 (必做)**：API 收 ISO `month=2026-07`，但 MoC 的 `show['time']`
   是 `YYYY/MM/DD HH:MM:SS`。services 層過濾前必須把 `2026-07` 轉成 `2026/07`
   再比對，否則永遠查無結果。此轉換屬台灣 provider 的資料格式知識，測試必須涵蓋。
-- MoC API 只按 category 查詢 (location/月份是本地過濾)，故全站每 12 小時
-  最多打 12 次上游 (12 個 category)，跨 user 共用。
+- MoC API 只按 category 查詢 (location/月份是本地過濾)。**「每 12 小時最多打 12 次上游、
+  跨 user 共用」是 best-effort 上界，不是硬保證**：LocMemCache 是 per-process 記憶體，
+  每個 gunicorn worker 與每個 Cloud Run instance 各自持有獨立 cache，實際上游呼叫次數
+  ≈ 12 × worker 數 × instance 數。為貼近此假設，prod 用 `--workers 1` + `--max-instances 1`
+  (見 §5)。另外 cache-aside 的 check-then-set 無 lock，冷啟動瞬間並發仍可能對同一
+  category 重複打上游 — 屬可接受取捨 (MoC 免費、不影響正確性)，故不加 lock 以維持 code 簡單。
 - Backend 現階段用 LocMemCache。已知限制：Cloud Run scale-to-zero 時 cache
   消失 — 可接受 (MoC 免費，重打不痛)。未來接付費 API 時僅改 settings 換
   持久 backend (如 Neon/Supabase 免費 Postgres 做 DatabaseCache)，業務 code 不動。
@@ -116,7 +120,9 @@ GET /health
   這同時避開 SPA fallback routing 問題 (WhiteNoise 不會把未知路徑 catch-all
   到 index.html，BrowserRouter 重新整理會 404)。
 - 頁面結構：
-  - 搜尋列：國家 (只有台灣時隱藏)、地區、類別、`<input type="month">` 月份選擇器、搜尋鈕
+  - 搜尋列：國家 (只有台灣時隱藏)、地區、類別、月份選擇器 (年 + 月兩個 `<select>`；
+    刻意不用 `<input type="month">` — 桌面版 Firefox 與 Safari 全版本不支援，會 fallback
+    成純文字框，使用者得自己猜格式輸入，反而更容易打錯)、搜尋鈕
   - 結果：卡片式列表 — 活動名稱、時間、地點 (點擊開 Google Map)、票價、
     售票狀態 badge；手機單欄、桌機多欄 grid
   - Loading：skeleton 卡片
@@ -142,8 +148,12 @@ GET /health
 - **本地開發流程**：dev 是兩個 process — Vite dev server (HMR) 用
   `server.proxy` 把 `/api` 轉發到 Django `:8000`；單一 container 只在 prod。
   makefile targets 隨之改寫 (`run-dev` 起兩個 process)。
-- **Cloud Run**：scale-to-zero、min instances 0，落在 always-free 額度內 ($0)。
-- **GitHub Actions** (push master)：pytest + vitest → docker build →
+- **Cloud Run**：scale-to-zero、min-instances 0、**max-instances 1** (低流量足夠，且讓
+  §3.3 的「跨 user 共用 cache」假設成立)，落在 always-free 額度內 ($0)。公開端點 (`--allow-unauthenticated`)
+  加一個 GCP budget alert (寫進 Terraform)，避免被爬蟲打爆超出免費額度而不自知。
+- **GitHub Actions** (push master)：pytest + vitest → **docker build + 合體 container 煙測**
+  (curl `/health`、`/`、`/api/v1/countries`，確認 collectstatic + WhiteNoise 服務 SPA 與 `/api`
+  真的一起起得來 — 這條路徑 test-backend/test-frontend 都不會跑到) →
   push Artifact Registry → `gcloud run deploy`。紅燈不部署。
   現有 deploy.yml 整份重寫 (它跑的 per-app pytest 與 `make run-prod` 都會失效)。
 - GCP 一次性 infra 用 **Terraform** 管理 (owner 指定，作為 IaC 學習)：
@@ -163,7 +173,7 @@ GET /health
   breadcrumb、fixed-plugin configurator)
 - Select2 / FontAwesome / Google Fonts 等 CDN 依賴
 - `tech_stack` app (內容併入前端 About 頁)
-- `requirements.txt` (Poetry 為單一依賴來源，見 §5)
+- `requirements.txt` (uv 為單一依賴來源，見 §5；Poetry 設定亦一併刪除)
 - Fly.io 相關設定 (fly.toml、deploy.yml 的 Fly 步驟、docker-compose-prod) — 於遷移完成後
 
 保留：
@@ -207,6 +217,6 @@ GET /health
 - Cloud Run 冷啟動 2-10 秒 (低流量下常見) — 可接受，前端有 loading 回饋。
   注意冷啟動與 LocMemCache 清空同時發生：每次閒置後的第一次搜尋 = 冷啟動 +
   cache miss。若實際體感太差，再考慮 min-instances=1 (會開始產生小額費用)。
-- LocMemCache 不跨 instance、不耐重啟 — 已知，見 §3.3 升級路徑。
+- LocMemCache 不跨 instance、不跨 gunicorn worker、不耐重啟 — 已知，見 §3.3 升級路徑。
 - MoC API 無 SLA、憑證有問題 — provider 層隔離，錯誤有明確 UX。
 - Owner 首次寫 React/TS — code 難度刻意壓低，元件小而少 (約 6 個)。
