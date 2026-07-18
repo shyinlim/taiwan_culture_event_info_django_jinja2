@@ -1,5 +1,10 @@
 # Culture Event Finder — React + Django API 重構設計
 
+> ⚠️ **SUPERSEDED** — 已被 `2026-07-18-culture-event-finder-design-v2.md` 取代。
+> **不得作為執行依據**，僅供追溯。
+> 本文件的 hosting 決策（直上 Cloud Run）、清理清單（刪 fly.toml / docker-compose）、
+> 本地開發流程（兩個裸 process）與里程碑順序皆已失效。
+
 - 日期：2026-07-11
 - 狀態：已與 owner 逐項確認並批准
 - 前身：taiwan_culture_event_info_django_jinja2 (Django + Jinja2 server-rendered)

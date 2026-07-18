@@ -1,5 +1,11 @@
 # Culture Event Finder Refactor — Implementation Plan
 
+> ⚠️ **SUPERSEDED** — 已被 `docs/superpowers/plans/2026-07-18-culture-event-finder-plan-v2.md` 取代。
+> **不得作為執行依據**，僅供追溯。
+> 本文件包含多項在 v2 順序下會造成損害的指令：刪除 `fly.toml`（v2 仍需它部署）、
+> 部署到 Cloud Run（v2 Phase 3 是 Fly.io）、Task 15 Step 4 指向 v2 順序下尚不存在的檔案。
+> v2 為自足文件，執行時不需開啟本檔。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/superpowers/specs/2026-07-11-react-django-refactor-design.md` (read it first)
