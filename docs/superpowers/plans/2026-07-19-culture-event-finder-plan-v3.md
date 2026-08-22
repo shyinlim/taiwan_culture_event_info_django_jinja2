@@ -1,14 +1,13 @@
-# Culture Event Finder Refactor — Implementation Plan v2
-
-> ⚠️ **SUPERSEDED (2026-07-19)** — 本文件已被 `2026-07-19-culture-event-finder-plan-v3.md` 取代（v3 改寫 Task 8–10 以符合定案的毛玻璃視覺，POC gate 已通過）。執行時請開 v3，不要用本檔。
-
+# Culture Event Finder Refactor — Implementation Plan v3
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/superpowers/specs/2026-07-18-culture-event-finder-design-v2.md`
+**Spec:** `docs/superpowers/specs/2026-07-19-culture-event-finder-design-v3.md`
 
 > ⚠️ **本文件自足。執行時不需開啟舊 plan。**
-> `docs/superpowers/plans/2026-07-11-culture-event-finder-refactor.md` 已標記 SUPERSEDED，
+> `2026-07-18-culture-event-finder-plan-v2.md`（v2）已標記 SUPERSEDED——v3 只改
+> Task 8–10 與 Phase 0（視覺定案為毛玻璃，見 spec v3 §4/§4.1），其餘 task 與 v2 相同。
+> 更早的 `2026-07-11-culture-event-finder-refactor.md` 也已 SUPERSEDED，
 > 其中包含在本 plan 順序下會造成損害的指令（刪除 `fly.toml`、部署 Cloud Run、
 > Task 15 Step 4 指向尚不存在的檔案）。**不要開它。**
 > 新舊 task 編號對照表在本文件最後的附錄，僅供日後追溯。
@@ -36,7 +35,7 @@
 - **prod gunicorn 用 `--workers 1`** — LocMemCache 是 per-process，多 worker 會各自持有獨立 cache。
 - **WhiteNoise 用 plain storage**（不設 `STATICFILES_STORAGE`）— Vite 已對檔名做 content-hash，manifest storage 會重複 hash 且可能 500。
 - **月份格式轉換（必做）**：API 收 ISO `month=2026-07`，MoC 的 `show['time']` 是 `YYYY/MM/DD HH:MM:SS`。services 層過濾前必須把 `2026-07` 轉成 `2026/07` 再比對，否則永遠查無結果。測試必須涵蓋。
-- **Task 9（UI 元件）開工前必須先通過 POC HTML gate** — 見 Task 9 Step 1。
+- **前端視覺 source of truth 是 `docs/poc/20260719_155200_ui_design_v27.html`**（POC gate 已於 2026-07-19 通過，v14 版已被 v27 取代）。Task 9/10 的 CSS 與 Tailwind class 組合皆抄自該檔，不得自行發明視覺方向；該檔唯讀，不可修改。禁用粉紅/magenta；badge 文案裝飾性 emoji 依 POC 原樣保留（spec v3 §4 附註：與先前排除 emoji 的原則有出入，尚未經 owner 逐項確認，動工前提醒一次）。
 - **後端測試從 repo root 跑**：Phase 1 是 `cd main_project && uv run python -m pytest . -v`；Task 12 重構後改為 `cd backend && uv run python -m pytest . -v`。
 - **`uv` binary 版本必須釘死**（不可用 `:latest`）。寫 Dockerfile 前上 https://github.com/astral-sh/uv/releases 確認當前版號。
 - 不引入 react-router、不引入 Redux、不引入重型 i18n 套件。
@@ -46,14 +45,15 @@
 
 Phase 0 沒有 code task，但有兩個必須完成的項目：
 
-- [ ] **spec v2 + plan v2 定稿**（本文件即是）
-- [ ] **owner 查 fly.io dashboard 的 billing**（blocking — **owner 未明確回覆查核結果前，不得開始 Task 1**，與 Task 9 的 POC gate 同等強制力）
+- [x] **spec v3 + plan v3 定稿**（本文件即是）
+- [x] **POC HTML gate 通過**：owner 於 2026-07-19 定案 `docs/poc/20260719_155200_ui_design_v27.html`（毛玻璃視覺，27 版迭代）
+- [ ] **owner 查 fly.io dashboard 的 billing**（blocking — **owner 未明確回覆查核結果前，不得開始 Task 1**；POC gate 已通過，這是 Phase 0 僅剩的 blocking 項）
   確認現有 Fly app 是否吃 grandfathered 免費額度。Fly 於 2024 年對新用戶取消免費方案，
   但舊有 Hobby/Launch/Scale 用戶保留原額度（3 shared-cpu VM、160GB 傳輸）。
   **若確認在扣錢，Phase 4 必須設定明確 deadline**（建議 Phase 3 上線後 30 天內），
   不可停留在「隨時做」。
 
-POC HTML 的 gate 併入 Task 9 Step 1（緊鄰它 block 的工作，避免脫節）。
+POC 迭代紀錄（v1–v27）保留在 `docs/poc/`；v27 是定案版，也是 Task 9/10 的視覺對照檔。
 
 ---
 
@@ -1051,8 +1051,18 @@ Expected：`countries OK`、`events OK N items`（N ≥ 0 皆可）、第一個 
 
 - [ ] **Step 1: Scaffold**
 
+**⚠️ `frontend/` 此時不是空目錄** —— Task 2 已經在裡面建了 `frontend/Dockerfile.dev`。
+`npm create vite@latest` 遇到非空目錄會跳互動式提示問「Remove existing files and
+continue?」，**選錯（選 yes / remove）會把 `Dockerfile.dev` 一起刪掉**。加 `--` 後的
+scaffold 工具本身不支援跳過這個提示，所以改用兩步：先確認要保留的檔案不受影響，
+再手動確認提示回答 No（保留現有檔案，讓 Vite 只新增它自己的檔案）：
+
 ```bash
+ls frontend/  # 確認目前只有 Dockerfile.dev，心裡有數等一下不要選 remove
 npm create vite@latest frontend -- --template react-ts
+# 互動提示「Current directory is not empty... Remove existing files and continue?」
+# 一定要選 "No"（保留 Dockerfile.dev），不要選 "Yes / remove"
+ls frontend/Dockerfile.dev  # scaffold 完成後立刻確認這個檔案還在
 cd frontend && npm install && npm install tailwindcss @tailwindcss/vite && npm install -D vitest
 ```
 
@@ -1319,13 +1329,19 @@ git add frontend/src && git commit -m "feat: add typed api client and time forma
   "app.title": "藝文活動查詢",
   "nav.search": "查活動",
   "nav.about": "關於",
+  "nav.theme": "切換主題",
   "search.country": "國家",
   "search.location": "地區",
   "search.category": "類別",
   "search.month": "月份",
   "search.submit": "搜尋",
-  "results.empty": "這個條件查無活動，換個月份或類別試試",
+  "search.year": "年份",
+  "results.emptyTitle": "找不到符合條件的活動",
+  "results.emptyHint": "試試看更換地區、類別或月份，或者清除篩選條件重新搜尋",
   "results.count": "筆活動",
+  "error.title": "資料讀取失敗",
+  "error.retry": "重新整理",
+  "event.detail": "詳細資訊",
   "error.upstream": "資料來源暫時無法使用，請稍後再試",
   "error.generic": "發生錯誤，請稍後再試",
   "event.onSales": "售票中",
@@ -1342,13 +1358,19 @@ git add frontend/src && git commit -m "feat: add typed api client and time forma
   "app.title": "Culture Event Finder",
   "nav.search": "Search",
   "nav.about": "About",
+  "nav.theme": "Toggle theme",
   "search.country": "Country",
   "search.location": "Location",
   "search.category": "Category",
   "search.month": "Month",
   "search.submit": "Search",
-  "results.empty": "No events for these filters — try another month or category",
+  "search.year": "Year",
+  "results.emptyTitle": "No events match these filters",
+  "results.emptyHint": "Try another location, category or month, or clear filters and search again",
   "results.count": "events",
+  "error.title": "Failed to load events",
+  "error.retry": "Retry",
+  "event.detail": "Details",
   "error.upstream": "Data source is temporarily unavailable. Please try again later.",
   "error.generic": "Something went wrong. Please try again later.",
   "event.onSales": "On sale",
@@ -1404,7 +1426,7 @@ export default function LanguageSwitch() {
     <button
       type="button"
       onClick={() => setLang(next)}
-      className="rounded-full border border-gray-300 px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
+      className="h-10 w-10 rounded-full flex items-center justify-center text-xs font-semibold hover:bg-[var(--surface-2)]"
     >
       {lang === "zh" ? "EN" : "中"}
     </button>
@@ -1423,232 +1445,506 @@ Expected: tsc 乾淨無錯。
 
 ---
 
-### Task 9: POC HTML gate + UI components (cards, list, form, states)
+### Task 9: UI components (glass design system, cards, list, form, states)
 
 **Files:**
-- Create（暫時，不進 repo）: `/tmp/culture-event-finder-poc.html`
-- Create under `frontend/src/components/`: `SkeletonCard.tsx`、`ErrorMessage.tsx`、`EventCard.tsx`、`EventList.tsx`、`SearchForm.tsx`
+- Create: `frontend/src/design.css`
+- Modify: `frontend/src/index.css`（加一行 import）
+- Create under `frontend/src/components/`: `Icon.tsx`、`SkeletonCard.tsx`、`ErrorMessage.tsx`、`EventCard.tsx`、`EventList.tsx`、`SearchForm.tsx`
 
 **Interfaces:**
 - Consumes: `EventItem`、`Country`、`LabeledOption`（Task 7）；`useT`、`useLang`、`pickLabel`（Task 8）；`formatEventTime`（Task 7）。
-- Produces: `<SearchForm countries value onChange onSubmit loading />`，export `SearchValue = {country: string; category: string; location: string; month: string}`；`<EventList events />`；`<ErrorMessage message />`；`<SkeletonCard />`。Task 10 消費這些。
+- Produces: `<SearchForm countries value onChange onSubmit loading />`，export `SearchValue = {country: string; category: string; location: string; month: string}`；`<EventList events />`；`<ErrorMessage message onRetry />`；`<SkeletonCard />`；`<Icon name size? />`；`design.css` 的 `.scene`/`.glass`/`.search-capsule`/`.btn-primary`/`.btn-secondary`/`.chip`/`.rail-btn` 等 class 與 CSS variables。Task 10 消費這些。
 
-owner 首次寫 React，為避免視覺方向錯了要重寫 6 個元件，**先做一頁靜態 HTML POC 並拿到 owner 明確確認，才動手寫 React 元件**。
+**POC gate：✅ 已通過（2026-07-19）。** 視覺定案於 `docs/poc/20260719_155200_ui_design_v27.html`
+（毛玻璃 + copper/ochre accent + 抽象曲線背景，spec v3 §4/§4.1），該檔保留在 repo 作 design reference。
+本 task 所有 CSS 與 Tailwind class 組合皆抄自該檔——**動工前先用瀏覽器開一次 v27 檔案**
+（`python3 -m http.server 8899` 於 `docs/poc/`），切換 dark/light 與四種結果狀態，
+知道成品長什麼樣再寫。
 
-- [ ] **Step 1: 寫 POC HTML（單檔、Tailwind CDN、假資料，無 build step）**
+**⚠️ 動工前先提醒 owner 一次**：POC v27 的售票狀態 badge 用了裝飾性 emoji（「🔥 熱賣中」），
+與 owner 稍早在 icon 系統上明確排除 emoji 的指示不一致（spec v3 §4 附註）。本 task 的 code
+先照 POC 原樣寫（`{event.onSales === "Y" && "🔥 "}熱賣中`），若 owner 確認要拿掉，
+是單一元件的一行改動。
 
-寫到 `/tmp/culture-event-finder-poc.html`：
+- [ ] **Step 1: `frontend/src/design.css`（抄自 v27 `<style>` 區塊）**
 
-```html
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Culture Event Finder — POC</title>
-<script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-gray-50">
-  <header class="border-b border-gray-200 bg-white">
-    <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-      <h1 class="text-lg font-bold text-gray-900">藝文活動查詢</h1>
-      <nav class="flex items-center gap-3 text-sm">
-        <button class="font-semibold text-blue-600">查活動</button>
-        <button class="text-gray-600">關於</button>
-        <button class="rounded-full border border-gray-300 px-3 py-1 text-sm text-gray-600 hover:bg-gray-100">EN</button>
-      </nav>
-    </div>
-  </header>
+```css
+/* Glass design system — source of truth: docs/poc/20260719_155200_ui_design_v27.html
+   毛玻璃四要件（spec v3 §4.1）：抽象曲線+雙色燈光供 blur 扭曲、極低不透明度面板
+   （dark 2% / light 55%）+ 較重 blur (36-40px) + brightness 提亮、::after sheen 高光、
+   彩色光暈跨面板邊界。改值前先回 POC 檔比對。 */
+:root, [data-theme="dark"] {
+  --wall-grad: radial-gradient(circle at 80% 20%, #1e1812 0%, #05070f 65%);
+  --lamp-1: rgba(181, 112, 4, 0.25);
+  --lamp-2: rgba(14, 165, 233, 0.12);
+  --floor: rgba(1, 2, 8, 0.95);
 
-  <main class="mx-auto max-w-5xl space-y-4 px-4 py-6">
-    <form class="grid grid-cols-2 gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:grid-cols-4">
-      <label class="block text-sm text-gray-600">
-        地區
-        <select class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900">
-          <option>臺北</option><option>高雄</option>
-        </select>
-      </label>
-      <label class="block text-sm text-gray-600">
-        類別
-        <select class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900">
-          <option>音樂</option><option>展覽</option>
-        </select>
-      </label>
-      <label class="block text-sm text-gray-600">
-        月份
-        <div class="mt-1 flex gap-2">
-          <select class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900"><option>2026</option></select>
-          <select class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900"><option>07</option></select>
-        </div>
-      </label>
-      <div class="flex items-end">
-        <button type="button" class="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700">搜尋</button>
-      </div>
-    </form>
+  --panel: rgba(255, 255, 255, 0.02);
+  --panel-border: rgba(255, 255, 255, 0.32);
+  --panel-border-dim: rgba(255, 255, 255, 0.08);
+  --sheen: rgba(255, 255, 255, 0.08);
+  --surface-2: rgba(255, 255, 255, 0.03);
+  --chip-dis: rgba(255, 255, 255, 0.04);
+  --skel: rgba(255, 255, 255, 0.06);
+  --text: #ffffff;
+  --text-muted: #cbd5e1;
+  --text-faint: #94a3b8;
 
-    <div class="flex gap-2 text-xs">
-      <button onclick="showState('results')" class="rounded border px-2 py-1">結果</button>
-      <button onclick="showState('loading')" class="rounded border px-2 py-1">Loading</button>
-      <button onclick="showState('empty')" class="rounded border px-2 py-1">空結果</button>
-      <button onclick="showState('error')" class="rounded border px-2 py-1">錯誤</button>
-    </div>
+  /* single copper/ochre accent — replaces v14's indigo-cool + orange-warm pair */
+  --accent: #B57004;
+  --accent-cool: #7a4700;
+  --accent-deep: #543000;
+  --link: #d99c38;
+}
+[data-theme="light"] {
+  --wall-grad: radial-gradient(circle at 80% 20%, #fef3c7 0%, #cbd5e1 65%);
+  --lamp-1: rgba(181, 112, 4, 0.2);
+  --lamp-2: rgba(14, 165, 233, 0.08);
+  --floor: rgba(15, 23, 42, 0.05);
 
-    <div id="state-results">
-      <p class="mb-3 text-sm text-gray-500">3 筆活動</p>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <article class="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="flex items-start justify-between gap-2">
-            <a class="font-semibold text-gray-900 hover:underline" href="#">模擬音樂會</a>
-            <span class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">售票中</span>
-          </div>
-          <p class="text-sm text-gray-500">07/12 19:30</p>
-          <p class="text-sm text-gray-600">國家音樂廳 <a class="ml-2 text-blue-600 hover:underline" href="#">地圖</a></p>
-          <p class="text-sm text-gray-500">$ 500</p>
-        </article>
-        <article class="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="flex items-start justify-between gap-2">
-            <a class="font-semibold text-gray-900 hover:underline" href="#">當代藝術展</a>
-          </div>
-          <p class="text-sm text-gray-500">07/20 10:00</p>
-          <p class="text-sm text-gray-600">北美館 <a class="ml-2 text-blue-600 hover:underline" href="#">地圖</a></p>
-        </article>
-        <article class="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div class="flex items-start justify-between gap-2">
-            <a class="font-semibold text-gray-900 hover:underline" href="#">親子劇場</a>
-            <span class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">售票中</span>
-          </div>
-          <p class="text-sm text-gray-500">07/25 14:00</p>
-          <p class="text-sm text-gray-600">城市舞台 <a class="ml-2 text-blue-600 hover:underline" href="#">地圖</a></p>
-          <p class="text-sm text-gray-500">$ 300</p>
-        </article>
-      </div>
-    </div>
+  --panel: rgba(255, 255, 255, 0.55);
+  --panel-border: rgba(255, 255, 255, 0.95);
+  --panel-border-dim: rgba(15, 23, 42, 0.15);
+  --sheen: rgba(255, 255, 255, 0.35);
+  --surface-2: rgba(15, 23, 42, 0.05);
+  --chip-dis: rgba(15, 23, 42, 0.08);
+  --skel: rgba(15, 23, 42, 0.06);
+  --text: #0f172a;
+  --text-muted: #334155;
+  --text-faint: #64748b;
+  --accent: #B57004;
+  --accent-cool: #7a4700;
+  --accent-deep: #543000;
+  --link: #B57004;
+}
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, "Noto Sans TC", sans-serif;
+  background: #05070f;
+  position: relative;
+  isolation: isolate;
+  transition: background .3s;
+}
 
-    <div id="state-loading" class="hidden grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <div class="animate-pulse rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 h-5 w-3/4 rounded bg-gray-200"></div>
-        <div class="mb-2 h-4 w-1/2 rounded bg-gray-200"></div>
-        <div class="h-4 w-2/3 rounded bg-gray-200"></div>
-      </div>
-      <div class="animate-pulse rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 h-5 w-3/4 rounded bg-gray-200"></div>
-        <div class="mb-2 h-4 w-1/2 rounded bg-gray-200"></div>
-        <div class="h-4 w-2/3 rounded bg-gray-200"></div>
-      </div>
-      <div class="animate-pulse rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div class="mb-3 h-5 w-3/4 rounded bg-gray-200"></div>
-        <div class="mb-2 h-4 w-1/2 rounded bg-gray-200"></div>
-        <div class="h-4 w-2/3 rounded bg-gray-200"></div>
-      </div>
-    </div>
+.scene { position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+.wall { position: absolute; inset: 0; background: var(--wall-grad); transition: background .3s; }
+.lamp-light {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 65% 50% at 85% 5%, var(--lamp-1), transparent 75%),
+    radial-gradient(ellipse 55% 45% at 15% 95%, var(--lamp-2), transparent 80%);
+  pointer-events: none;
+}
+.floor-shadow {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 55%, var(--floor) 100%);
+  pointer-events: none;
+}
 
-    <p id="state-empty" class="hidden rounded-xl bg-gray-50 p-6 text-center text-gray-500">這個條件查無活動，換個月份或類別試試</p>
+.blob { position: absolute; border-radius: 9999px; opacity: 0.75; filter: blur(36px); pointer-events: none; }
+.blob-bronze { width: 550px; height: 550px; top: -120px; right: 5%;
+  background: radial-gradient(circle, rgba(181,112,4,0.2) 0%, rgba(122,71,0,0.06) 50%, transparent 80%); }
+.blob-cyan { width: 450px; height: 450px; bottom: 15%; left: 35%;
+  background: radial-gradient(circle, rgba(14,165,233,0.15) 0%, rgba(3,105,161,0.04) 50%, transparent 80%); }
 
-    <div id="state-error" class="hidden rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">資料來源暫時無法使用，請稍後再試</div>
-  </main>
+.glass {
+  position: relative;
+  background: var(--panel);
+  border: 1.5px solid var(--panel-border-dim);
+  border-top: 1.8px solid var(--panel-border);
+  border-left: 1.8px solid var(--panel-border-dim);
+  border-right: 1.8px solid var(--panel-border);
+  box-shadow:
+    0 40px 90px -25px rgba(0,0,0,0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(40px) saturate(160%) brightness(1.05);
+  -webkit-backdrop-filter: blur(40px) saturate(160%) brightness(1.05);
+  transition: background .3s, border-color .3s;
+}
+[data-theme="light"] .glass {
+  backdrop-filter: blur(36px) saturate(150%) brightness(1.02);
+  -webkit-backdrop-filter: blur(36px) saturate(150%) brightness(1.02);
+  box-shadow: 0 40px 90px -25px rgba(15,23,42,0.1);
+}
+.glass::after {
+  content: "";
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 20%, transparent 40%);
+}
+[data-theme="light"] .glass::after {
+  background: linear-gradient(135deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.1) 25%, transparent 50%);
+}
+.glass > * { position: relative; z-index: 1; }
 
-  <script>
-    function showState(name) {
-      ['results', 'loading', 'empty', 'error'].forEach(function (s) {
-        document.getElementById('state-' + s).classList.toggle('hidden', s !== name);
-      });
-    }
-  </script>
-</body>
-</html>
+/* Unified Airbnb-style search bar */
+.search-capsule {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--panel-border-dim);
+  box-shadow: 0 4px 20px -5px rgba(0,0,0,0.2);
+  overflow: hidden;
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+.search-capsule:hover, .search-capsule:focus-within {
+  box-shadow: 0 8px 30px -5px rgba(0,0,0,0.3);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+[data-theme="light"] .search-capsule:hover { border-color: rgba(15, 23, 42, 0.3); }
+.search-field {
+  flex: 1;
+  position: relative;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-bottom: 1px solid var(--panel-border-dim);
+  transition: background 0.2s;
+}
+@media (min-width: 640px) {
+  .search-field {
+    border-bottom: none;
+    border-right: 1px solid var(--panel-border-dim);
+    padding: 0.5rem 1rem;
+  }
+}
+.search-field:last-of-type { border-bottom: none; border-right: none; }
+.search-field:hover { background: rgba(255, 255, 255, 0.04); }
+[data-theme="light"] .search-field:hover { background: rgba(15, 23, 42, 0.03); }
+
+.search-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}
+.search-select {
+  background: transparent !important;
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-cool), var(--accent));
+  color: #ffffff;
+  border-radius: 9999px;
+  font-weight: 600;
+  transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.btn-primary:hover {
+  background: var(--accent);
+  transform: scale(1.02);
+  box-shadow: 0 8px 25px -5px var(--accent-cool);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  border-radius: 9999px;
+  font-weight: 500;
+  transition: all 0.2s ease-out;
+}
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+[data-theme="light"] .btn-secondary {
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  color: var(--text-muted);
+}
+[data-theme="light"] .btn-secondary:hover {
+  background: rgba(15, 23, 42, 0.1);
+  border-color: rgba(15, 23, 42, 0.2);
+  color: var(--text);
+}
+
+.chip.active {
+  background: linear-gradient(135deg, var(--accent-cool), var(--accent)) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-color: transparent !important;
+  box-shadow: 0 4px 15px -3px var(--accent-cool);
+}
+
+.rail-btn.active {
+  background: linear-gradient(135deg, var(--accent-cool), var(--accent));
+  color: #ffffff;
+  box-shadow: 0 4px 15px -3px var(--accent-cool);
+}
+
+.card-hover {
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+.card-hover:hover { transform: translateY(-6px); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6); border-color: rgba(255,255,255,0.15); }
+[data-theme="light"] .card-hover:hover { box-shadow: 0 25px 50px -12px rgba(15,23,42,0.2); }
+
+.card-img-svg { transition: transform 1.5s cubic-bezier(0.16, 1, 0.3, 1); }
+.card-hover:hover .card-img-svg { transform: scale(1.08); }
+
+.icon { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 ```
 
-- [ ] **Step 2: 起 local server，截 375px 與 1440px 兩張圖**
+- [ ] **Step 2: `frontend/src/index.css` 加 import**
 
-```bash
-cd /tmp && python3 -m http.server 8899
+在 Tailwind import 之後加一行：
+
+```css
+@import "./design.css";
 ```
 
-用瀏覽器開 `http://127.0.0.1:8899/culture-event-finder-poc.html`，devtools 切到 375×667（手機寬度）截一張圖，再切到 1440×900（桌機寬度）截一張圖。頁面上「結果／Loading／空結果／錯誤」四個按鈕依序點過，確認四種 state 在兩種寬度下都合理（skeleton 卡片數量對齊、空結果與錯誤訊息置中不跑版、卡片 grid 手機單欄、桌機三欄）。
+- [ ] **Step 3: `frontend/src/components/Icon.tsx`（inline SVG icon，不引 icon library）**
 
-- [ ] **Step 3: 交付 owner 確認**
+path 抄自 v27 的 `<symbol>` defs；React 版直接 per-name render，不走 `<use>` 間接層。
+比 v14 多四個類別 chip 用的 icon：music/tent/masks/frame。
 
-把兩張截圖（375px、1440px）交給 owner，附上四種 state 各自對應哪個按鈕。**owner 必須明確回覆確認（例如「可以，開始寫 React」）才能進入 Step 4**；若 owner 要求調整佈局或配色，回到 Step 1 修改 HTML、重新截圖，不可跳過這輪迴直接動工寫 React 元件。
+```tsx
+// stroke icon set from docs/poc/20260719_155200_ui_design_v27.html — no icon library
+const PATHS = {
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </>
+  ),
+  moon: <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z" />,
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M3 10h18" />
+    </>
+  ),
+  pin: (
+    <>
+      <path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22z" />
+      <circle cx="12" cy="9.5" r="2.3" />
+    </>
+  ),
+  ticket: (
+    <>
+      <path d="M3 9a2 2 0 0 1 0 4v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a2 2 0 0 1 0-4V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2z" />
+      <path d="M12 5v14" strokeDasharray="2 3" />
+    </>
+  ),
+  alert: (
+    <>
+      <path d="M12 3l10 18H2z" />
+      <path d="M12 10v4" />
+      <path d="M12 17h.01" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <path d="M21 3v6h-6" />
+    </>
+  ),
+  music: (
+    <>
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </>
+  ),
+  tent: (
+    <>
+      <path d="M19 20L12 4 5 20" />
+      <path d="M12 15L9 20h6z" />
+    </>
+  ),
+  masks: (
+    <>
+      <path d="M4 10c0-4 4-8 8-8s8 4 8 8c0 5-4 10-8 10-4 0-8-5-8-10z" />
+      <path d="M9 9h.01M15 9h.01M12 14c-1 0-2 .5-2 1h4c0-.5-1-1-2-1z" />
+    </>
+  ),
+  frame: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <path d="M3 9h18M9 21V9" />
+    </>
+  ),
+};
 
-- [ ] **Step 4: 清理 POC 檔案（丟棄式 prototype，不進 repo 主線）**
+export type IconName = keyof typeof PATHS;
 
-```bash
-rm /tmp/culture-event-finder-poc.html
+export default function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+  return (
+    <svg className="icon" style={{ width: size, height: size }} viewBox="0 0 24 24" aria-hidden="true">
+      {PATHS[name]}
+    </svg>
+  );
+}
 ```
 
-Expected: 檔案刪除。這份 HTML 從未 `git add`，所以本來就不會出現在任何 diff 裡；下面的元件會直接複用其中調校過的 Tailwind class 組合。
-
-- [ ] **Step 5: `SkeletonCard.tsx`**
+- [ ] **Step 4: `frontend/src/components/SkeletonCard.tsx`（v27：多一條分隔線 + 票價列 skeleton，對齊卡片底部「詳細資訊」列）**
 
 ```tsx
 export default function SkeletonCard() {
   return (
-    <div className="animate-pulse rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 h-5 w-3/4 rounded bg-gray-200" />
-      <div className="mb-2 h-4 w-1/2 rounded bg-gray-200" />
-      <div className="h-4 w-2/3 rounded bg-gray-200" />
+    <div className="rounded-3xl bg-[var(--surface-2)] border border-[var(--panel-border-dim)] p-6 animate-pulse space-y-4">
+      <div className="h-32 bg-[var(--skel)] rounded-2xl -m-6 mb-4" />
+      <div className="h-5 bg-[var(--skel)] rounded w-3/4" />
+      <div className="h-4 bg-[var(--skel)] rounded w-1/2" />
+      <div className="h-4 bg-[var(--skel)] rounded w-2/3" />
+      <div className="border-t border-[var(--panel-border-dim)] pt-4 mt-4">
+        <div className="h-4 bg-[var(--skel)] rounded w-1/3" />
+      </div>
     </div>
   );
 }
 ```
 
-- [ ] **Step 6: `ErrorMessage.tsx`**
+- [ ] **Step 5: `frontend/src/components/ErrorMessage.tsx`（v27 錯誤畫面：三角形線稿 + 虛線邊框容器 + `.btn-secondary` 重試鈕）**
 
 ```tsx
-export default function ErrorMessage({ message }: { message: string }) {
+import { useT } from "../i18n";
+import Icon from "./Icon";
+
+export default function ErrorMessage({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT();
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
-      {message}
+    <div
+      className="text-center py-24 px-4 bg-[var(--surface-2)] rounded-3xl border border-[var(--panel-border-dim)] border-dashed mt-4"
+      role="alert"
+    >
+      <svg className="mx-auto mb-5" style={{ width: 80, height: 80 }} viewBox="0 0 100 100"
+        fill="none" stroke="var(--accent)" strokeWidth="1.5">
+        <path d="M50 12 L92 84 L8 84 Z" strokeLinejoin="round" />
+        <path d="M50 38 V60" strokeLinecap="round" />
+        <circle cx="50" cy="72" r="2" fill="var(--accent)" />
+      </svg>
+      <p className="text-[var(--text)] font-bold text-lg mb-2">{t("error.title")}</p>
+      <p className="text-[var(--text-muted)] text-sm mb-6">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="btn-secondary rounded-full px-6 py-2.5 text-sm font-bold inline-flex items-center gap-2 transition hover:scale-105"
+      >
+        <Icon name="refresh" />
+        {t("error.retry")}
+      </button>
     </div>
   );
 }
 ```
 
-- [ ] **Step 7: `EventCard.tsx`**
+- [ ] **Step 6: `frontend/src/components/EventCard.tsx`（v27：漸層 banner 慢速 zoom hover、底部分隔線 + 「詳細資訊」按鈕）**
+
+⚠️ 見本 task 開頭的 owner 提醒：`onSales === "Y"` 的 badge 文案含裝飾性 emoji，
+照 POC 原樣實作，是否拿掉待 owner 回覆。
 
 ```tsx
 import { useT } from "../i18n";
 import type { EventItem } from "../types";
 import { formatEventTime } from "../utils/format";
+import Icon from "./Icon";
 
-export default function EventCard({ event }: { event: EventItem }) {
+// v27 的三組 banner：漸層底 + 白色線條幾何。依卡片序輪流，讓 grid 有節奏又不需要圖片資源
+const BANNERS = [
+  {
+    gradient: "linear-gradient(135deg,#c2410c,#d97706)",
+    art: (
+      <>
+        <circle cx="248" cy="20" r="38" />
+        <circle cx="248" cy="20" r="24" strokeDasharray="3 5" />
+        <path d="M30 92 L58 44 L86 92 Z" />
+        <path d="M140 20 V44 M128 32 H152" strokeWidth="1.6" />
+      </>
+    ),
+  },
+  {
+    gradient: "linear-gradient(135deg,#1e3a8a,#3b82f6)",
+    art: (
+      <>
+        <rect x="220" y="18" width="52" height="52" transform="rotate(16 246 44)" />
+        <path d="M20 30 A46 46 0 0 1 66 76" strokeDasharray="3 5" />
+        <path d="M120 84 C150 40 200 96 244 60" strokeDasharray="1 7" strokeLinecap="round" />
+      </>
+    ),
+  },
+  {
+    gradient: "linear-gradient(135deg,#0d9488,#115e59)",
+    art: (
+      <>
+        <path d="M252 14 C255 34 262 41 282 44 C262 47 255 54 252 74 C249 54 242 47 222 44 C242 41 249 34 252 14 Z" />
+        <circle cx="52" cy="76" r="30" />
+        <circle cx="52" cy="76" r="18" strokeDasharray="3 5" />
+        <path d="M140 26 L166 70 L114 70 Z" />
+      </>
+    ),
+  },
+];
+
+export default function EventCard({ event, index }: { event: EventItem; index: number }) {
   const t = useT();
+  const banner = BANNERS[index % BANNERS.length];
   return (
-    <article className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <a
-          href={event.googleSearchUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="font-semibold text-gray-900 hover:underline"
-        >
-          {event.title}
-        </a>
+    <article className="card-hover group rounded-3xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border-dim)] transition-all duration-300">
+      <div className="h-32 relative flex items-end p-4 overflow-hidden" style={{ background: banner.gradient }}>
+        <svg className="card-img-svg absolute inset-0 w-full h-full" viewBox="0 0 300 128" fill="none"
+          stroke="rgba(255,255,255,.2)" strokeWidth="1.2" preserveAspectRatio="xMidYMid slice">
+          {banner.art}
+        </svg>
         {event.onSales === "Y" && (
-          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
-            {t("event.onSales")}
+          <span className="relative text-xs font-semibold bg-black/50 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-sm">
+            🔥 {t("event.onSales")}
           </span>
         )}
       </div>
-      <p className="text-sm text-gray-500">{formatEventTime(event.startTime)}</p>
-      <p className="text-sm text-gray-600">
-        {event.locationName ?? event.location}
-        <a
-          href={event.googleMapUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="ml-2 text-blue-600 hover:underline"
-        >
-          {t("event.map")}
+      <div className="p-6">
+        <h3 className="font-bold text-lg leading-snug mb-3 text-[var(--text)] group-hover:text-[var(--link)] transition-colors">
+          <a href={event.googleSearchUrl} target="_blank" rel="noreferrer">
+            {event.title}
+          </a>
+        </h3>
+        <p className="text-sm text-[var(--text-muted)] mb-2 flex items-center gap-2">
+          <span className="opacity-70"><Icon name="calendar" size={16} /></span>
+          {formatEventTime(event.startTime)}
+        </p>
+        <a href={event.googleMapUrl} target="_blank" rel="noreferrer"
+          className="text-sm hover:underline flex items-start gap-2 mb-5" style={{ color: "var(--link)" }}>
+          <span className="mt-0.5 opacity-70"><Icon name="pin" size={16} /></span>
+          <span className="leading-relaxed">{event.locationName ?? event.location}</span>
         </a>
-      </p>
-      {event.price && <p className="text-sm text-gray-500">$ {event.price}</p>}
+        <div className="flex items-center justify-between border-t border-[var(--panel-border-dim)] pt-4 mt-2">
+          {event.price && <p className="text-sm font-bold text-[var(--text)]">$ {event.price}</p>}
+          <a href={event.googleSearchUrl} target="_blank" rel="noreferrer"
+            className="text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--surface-2)] text-[var(--text)] hover:bg-white/10 transition">
+            {t("event.detail")}
+          </a>
+        </div>
+      </div>
     </article>
   );
 }
 ```
 
-- [ ] **Step 8: `EventList.tsx`**
+- [ ] **Step 7: `frontend/src/components/EventList.tsx`（含 v27 空結果畫面：放大鏡線稿 + 虛線邊框容器）**
 
 ```tsx
 import { useT } from "../i18n";
@@ -1658,14 +1954,26 @@ import EventCard from "./EventCard";
 export default function EventList({ events }: { events: EventItem[] }) {
   const t = useT();
   if (events.length === 0) {
-    return <p className="rounded-xl bg-gray-50 p-6 text-center text-gray-500">{t("results.empty")}</p>;
+    return (
+      <div className="text-center py-24 px-4 bg-[var(--surface-2)] rounded-3xl border border-[var(--panel-border-dim)] border-dashed mt-4">
+        <svg className="mx-auto mb-5" style={{ width: 80, height: 80 }} viewBox="0 0 100 100"
+          fill="none" stroke="var(--text-faint)" strokeWidth="1.5">
+          <circle cx="44" cy="44" r="26" />
+          <path d="M63 63 L84 84" strokeLinecap="round" />
+          <path d="M44 10 V2 M44 86 v-8" strokeDasharray="2 4" />
+          <path d="M8 44 H16 M72 44 h8" strokeDasharray="2 4" />
+        </svg>
+        <p className="text-[var(--text)] font-bold text-lg mb-2">{t("results.emptyTitle")}</p>
+        <p className="text-[var(--text-muted)] text-sm max-w-sm mx-auto">{t("results.emptyHint")}</p>
+      </div>
+    );
   }
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-500">{events.length} {t("results.count")}</p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <p className="mb-3 text-sm text-[var(--text-muted)]">{events.length} {t("results.count")}</p>
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {events.map((event, i) => (
-          <EventCard key={`${event.title}-${event.startTime}-${i}`} event={event} />
+          <EventCard key={`${event.title}-${event.startTime}-${i}`} event={event} index={i} />
         ))}
       </div>
     </div>
@@ -1673,11 +1981,16 @@ export default function EventList({ events }: { events: EventItem[] }) {
 }
 ```
 
-- [ ] **Step 9: `SearchForm.tsx`**
+- [ ] **Step 8: `frontend/src/components/SearchForm.tsx`（右上角國家選擇器 + Airbnb 風格搜尋膠囊 + 帶 icon 的類別 chip）**
+
+v27 把國家選擇器搬到卡片標題列右上角（不再是獨立一條 strip），且拿掉了「即將推出」文字，
+只用 `opacity-60` + `disabled` 表示未開放。類別現在有兩個同步的 UI 入口——`search-capsule`
+裡的類別 `<select>` 與下方帶 icon 的 chip 列——兩者都寫 `value.category`，不是各自的 state。
 
 ```tsx
 import { pickLabel, useLang, useT } from "../i18n";
 import type { Country } from "../types";
+import Icon from "./Icon";
 
 export interface SearchValue {
   country: string;
@@ -1694,8 +2007,19 @@ interface Props {
   loading: boolean;
 }
 
-const selectClass =
-  "mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none";
+// spec v3 §4：未上線國家後端沒有資料，chip 內容 hardcode 在前端；
+// 未來國家上線時把它從這裡移除（API /countries 會開始回傳它）
+const COMING_SOON = [
+  { code: "JP", label: { zh: "日本", en: "Japan" } },
+  { code: "KR", label: { zh: "韓國", en: "Korea" } },
+];
+
+// 類別快捷 chip：與 search-capsule 內的類別 <select> 是同一個 filter 的兩個入口，
+// 都寫 value.category，動態從 country.categories 產生。
+// 注意：backend category id 是後端 provider 定義的整數（Task 3 的 taiwan.py），
+// 與 POC v27 示意用的 4 個固定英文 key（exhibition/performance/music/market）不是同一組 —
+// 不做 category → icon 對照表，避免 key 對不上導致 icon 永遠不顯示。
+const GRADIENT = "linear-gradient(135deg, var(--accent-cool), var(--accent))";
 
 // 月份選擇器用年 + 月兩個 <select>，不用 <input type="month">：
 // 桌面版 Firefox / Safari 全版本不支援 month picker，會 fallback 成純文字框。
@@ -1710,103 +2034,169 @@ export default function SearchForm({ countries, value, onChange, onSubmit, loadi
   const country = countries.find((c) => c.code === value.country);
 
   return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
-      className="grid grid-cols-2 gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:grid-cols-4"
-    >
-      {countries.length > 1 && (
-        <label className="col-span-2 block text-sm text-gray-600 sm:col-span-4">
-          {t("search.country")}
-          <select
-            className={selectClass}
-            value={value.country}
-            onChange={(e) => onChange({ ...value, country: e.target.value, location: "", category: "" })}
+    <div>
+      {/* Country selector — top-right pill group, per v27 layout (rendered by the parent
+          title row via this same component's return; kept together with the search bar
+          because they share value/onChange) */}
+      <div className="flex items-center gap-2 self-start md:self-auto bg-[var(--surface-2)] p-1.5 rounded-full border border-[var(--panel-border-dim)] shadow-sm w-fit mb-6 md:mb-8 ml-auto">
+        {countries.map((c) => (
+          <button
+            key={c.code}
+            type="button"
+            onClick={() => {
+              // 切國家時 location/category 不能留空字串 — 後端 category 用
+              // `.isdigit()` 驗證，空字串一定回 400。改選新國家的第一個選項。
+              const next = countries.find((cc) => cc.code === c.code);
+              onChange({
+                ...value,
+                country: c.code,
+                location: String(next?.locations[0]?.value ?? ""),
+                category: String(next?.categories[0]?.value ?? ""),
+              });
+            }}
+            className={
+              c.code === value.country
+                ? "btn-primary shrink-0 flex items-center gap-2 px-4 py-1.5 text-sm shadow"
+                : "shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-[var(--text-muted)] hover:bg-[var(--surface-2)]"
+            }
           >
-            {countries.map((c) => (
-              <option key={c.code} value={c.code}>{pickLabel(c.name, lang)}</option>
+            <span className="h-5 w-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-bold">
+              {c.code.toUpperCase()}
+            </span>
+            {pickLabel(c.name, lang)}
+          </button>
+        ))}
+        {COMING_SOON.map((c) => (
+          <button
+            key={c.code}
+            type="button"
+            disabled
+            className="shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-[var(--text-muted)] cursor-not-allowed opacity-60"
+          >
+            <span className="h-5 w-5 rounded-full bg-[var(--panel-border-dim)] flex items-center justify-center text-[10px] font-bold">
+              {c.code}
+            </span>
+            {pickLabel(c.label, lang)}
+          </button>
+        ))}
+      </div>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+        className="search-capsule mb-8 flex-col sm:flex-row rounded-3xl sm:rounded-full"
+      >
+        <div className="search-field">
+          <label className="search-label" htmlFor="sf-location">{t("search.location")}</label>
+          <select
+            id="sf-location"
+            className="search-select text-[var(--text)]"
+            value={value.location}
+            onChange={(e) => onChange({ ...value, location: e.target.value })}
+          >
+            {country?.locations.map((o) => (
+              <option className="text-black" key={String(o.value)} value={String(o.value)}>
+                {pickLabel(o.label, lang)}
+              </option>
             ))}
           </select>
-        </label>
-      )}
-      <label className="block text-sm text-gray-600">
-        {t("search.location")}
-        <select
-          className={selectClass}
-          value={value.location}
-          onChange={(e) => onChange({ ...value, location: e.target.value })}
-        >
-          {country?.locations.map((o) => (
-            <option key={String(o.value)} value={String(o.value)}>{pickLabel(o.label, lang)}</option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm text-gray-600">
-        {t("search.category")}
-        <select
-          className={selectClass}
-          value={value.category}
-          onChange={(e) => onChange({ ...value, category: e.target.value })}
-        >
-          {country?.categories.map((o) => (
-            <option key={String(o.value)} value={String(o.value)}>{pickLabel(o.label, lang)}</option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm text-gray-600">
-        {t("search.month")}
-        <div className="mt-1 flex gap-2">
+        </div>
+        <div className="search-field">
+          <label className="search-label" htmlFor="sf-category">{t("search.category")}</label>
           <select
-            className={selectClass}
+            id="sf-category"
+            className="search-select text-[var(--text)]"
+            value={value.category}
+            onChange={(e) => onChange({ ...value, category: e.target.value })}
+          >
+            {country?.categories.map((o) => (
+              <option className="text-black" key={String(o.value)} value={String(o.value)}>
+                {pickLabel(o.label, lang)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="search-field">
+          <label className="search-label" htmlFor="sf-year">{t("search.month")} ({t("search.year")})</label>
+          <select
+            id="sf-year"
+            className="search-select text-[var(--text)]"
             value={value.month.slice(0, 4)}
             onChange={(e) => onChange({ ...value, month: `${e.target.value}-${value.month.slice(5, 7)}` })}
           >
             {YEARS.map((y) => (
-              <option key={y} value={y}>{y}</option>
+              <option className="text-black" key={y} value={y}>{y}</option>
             ))}
           </select>
+        </div>
+        <div className="search-field">
+          <label className="search-label" htmlFor="sf-month">{t("search.month")}</label>
           <select
-            className={selectClass}
+            id="sf-month"
+            className="search-select text-[var(--text)]"
             value={value.month.slice(5, 7)}
             onChange={(e) => onChange({ ...value, month: `${value.month.slice(0, 4)}-${e.target.value}` })}
           >
             {MONTHS.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option className="text-black" key={m} value={m}>{m}</option>
             ))}
           </select>
         </div>
-      </label>
-      <div className="flex items-end">
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {t("search.submit")}
-        </button>
+        <div className="p-3 sm:p-2 flex items-center justify-center">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full sm:w-12 h-12 rounded-2xl sm:rounded-full flex items-center justify-center text-sm shadow-lg gap-2 text-white hover:scale-105 transition-transform disabled:opacity-50"
+            style={{ background: GRADIENT }}
+          >
+            <Icon name="search" />
+            <span className="sm:hidden font-semibold">{t("search.submit")}</span>
+          </button>
+        </div>
+      </form>
+
+      {/* 類別快捷 chip：不含「全部」— MoC API 只能按單一 category 查，沒有 all-category
+          查詢能力（spec §3.3），送空字串給後端一定回 400 INVALID_PARAM */}
+      <div className="flex flex-wrap gap-2.5 mb-8">
+        {country?.categories.map((o) => {
+          const val = String(o.value);
+          return (
+            <button
+              key={val}
+              type="button"
+              onClick={() => onChange({ ...value, category: val })}
+              className={`chip ${value.category === val ? "active" : "btn-secondary"} flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium`}
+            >
+              {pickLabel(o.label, lang)}
+            </button>
+          );
+        })}
       </div>
-    </form>
+    </div>
   );
 }
 ```
 
-- [ ] **Step 10: Type-check and commit**
+- [ ] **Step 9: Type-check and commit**
 
 ```bash
 cd frontend && npx tsc --noEmit
-git add frontend/src/components && git commit -m "feat: add search form and event card components"
+git add frontend/src && git commit -m "feat: add glass design system and ui components"
 ```
+
+Expected: tsc 乾淨無錯。
 
 ---
 
-### Task 10: App assembly + About + manual E2E
+### Task 10: App assembly (scene + icon rail + theme) + About + manual E2E
 
 **Files:**
 - Modify: `frontend/src/App.tsx`（全部重寫）、`frontend/src/main.tsx`
 - Delete: `frontend/src/App.css`、`frontend/src/assets/react.svg`（scaffold 殘留物）
 
 **Interfaces:**
-- Consumes: Task 7–9 的所有產出。
-- Produces: 完整 SPA（搜尋 + about 兩個畫面、header、idle/loading/success/error 四種狀態）。
+- Consumes: Task 7–9 的所有產出（含 `design.css` 的 `.scene`/`.glass`/`.rail-btn` class 與 `<Icon />`）。
+- Produces: 完整 SPA — 背景場景、桌機 icon rail / 手機頂部 bar、dark/light 主題切換、
+  搜尋 + about 兩個畫面、idle/loading/success/error 四種狀態。
 
 - [ ] **Step 1: `frontend/src/main.tsx`**
 
@@ -1828,15 +2218,23 @@ createRoot(document.getElementById("root")!).render(
 
 - [ ] **Step 2: `frontend/src/App.tsx`**
 
+版面結構抄自定案 POC `docs/poc/20260719_155200_ui_design_v27.html`：
+背景 `.scene`（深色 radial-gradient + 抽象曲線 SVG + 雙色燈光 + 兩顆跨面板光暈）→
+桌機左側 icon rail（搜尋/關於/主題/語言）→ 手機頂部 bar → 單一 `.glass` 大面板承載
+搜尋或 About 畫面。搜尋畫面標題列右側放 `SearchForm` 內建的國家選擇器（v27 把它從獨立
+strip 移進標題列，元件內部已處理好排版，這裡只需把 `SearchForm` 放在對的位置）。
+主題切換 = 改 `<html data-theme>`，其餘全由 `design.css` 的 CSS variables 接手。
+
 ```tsx
 import { useEffect, useState } from "react";
 import { ApiError, fetchCountries, fetchEvents } from "./api";
 import ErrorMessage from "./components/ErrorMessage";
 import EventList from "./components/EventList";
+import Icon from "./components/Icon";
 import LanguageSwitch from "./components/LanguageSwitch";
 import SearchForm, { type SearchValue } from "./components/SearchForm";
 import SkeletonCard from "./components/SkeletonCard";
-import { useT } from "./i18n";
+import { pickLabel, useLang, useT } from "./i18n";
 import type { Country, EventItem } from "./types";
 
 function currentMonth(): string {
@@ -1845,23 +2243,25 @@ function currentMonth(): string {
 
 type Status = "idle" | "loading" | "success" | "error";
 
-// spec §4：About 頁的 tech stack 表，內容搬自原 tech_stack.html（Creative Tim /
-// Bootstrap 已隨 Material Dashboard 移除，改列新 stack 的實際成員）
-const TECH_STACK: { label: string; url: string }[] = [
-  { label: "Django", url: "https://www.djangoproject.com/" },
-  { label: "React", url: "https://react.dev/" },
-  { label: "Vite", url: "https://vitejs.dev/" },
-  { label: "Tailwind CSS", url: "https://tailwindcss.com/" },
-  { label: "Pytest", url: "https://docs.pytest.org/" },
-  { label: "Docker", url: "https://www.docker.com/" },
-  { label: "GitHub Actions", url: "https://github.com/features/actions" },
-  { label: "Fly.io", url: "https://fly.io/" },
-  { label: "MoC Open Data", url: "https://opendata.culture.tw/" },
+// spec §4：About 頁 tech stack 表（v27 樣式：名稱 + 角色兩欄，名稱帶官網連結）。
+// Fly.io 而非 Cloud Run —— Phase 3 目標是 Fly，Phase 4 遷移後才改這行。
+const TECH_STACK: { label: string; url: string; role: Record<string, string> }[] = [
+  { label: "Django 5.2 LTS", url: "https://www.djangoproject.com/", role: { zh: "後端框架", en: "Backend framework" } },
+  { label: "uv", url: "https://docs.astral.sh/uv/", role: { zh: "依賴管理", en: "Dependency management" } },
+  { label: "toolkitsy", url: "https://pypi.org/project/toolkitsy/", role: { zh: "Logging", en: "Logging" } },
+  { label: "React + TypeScript", url: "https://react.dev/", role: { zh: "前端框架", en: "Frontend framework" } },
+  { label: "Vite", url: "https://vitejs.dev/", role: { zh: "前端 build tool", en: "Frontend build tool" } },
+  { label: "Tailwind CSS", url: "https://tailwindcss.com/", role: { zh: "樣式框架", en: "CSS framework" } },
+  { label: "pytest", url: "https://docs.pytest.org/", role: { zh: "後端測試", en: "Backend testing" } },
+  { label: "Vitest", url: "https://vitest.dev/", role: { zh: "前端測試", en: "Frontend testing" } },
+  { label: "Fly.io", url: "https://fly.io/", role: { zh: "部署", en: "Deployment" } },
 ];
 
 export default function App() {
   const t = useT();
+  const { lang } = useLang();
   const [view, setView] = useState<"search" | "about">("search");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [countries, setCountries] = useState<Country[]>([]);
   const [form, setForm] = useState<SearchValue>({
     country: "", category: "", location: "", month: currentMonth(),
@@ -1869,6 +2269,10 @@ export default function App() {
   const [status, setStatus] = useState<Status>("idle");
   const [events, setEvents] = useState<EventItem[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     fetchCountries()
@@ -1884,7 +2288,12 @@ export default function App() {
           }));
         }
       })
-      .catch(() => setErrorMessage(t("error.generic")));
+      .catch(() => {
+        // status 也要跟著切到 "error"，否則 errorMessage 設了但沒有畫面會渲染它——
+        // 開站當下 API 掛掉會變成靜默的空白下拉選單，使用者看不出哪裡出錯
+        setStatus("error");
+        setErrorMessage(t("error.generic"));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1907,66 +2316,135 @@ export default function App() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <h1 className="text-lg font-bold text-gray-900">{t("app.title")}</h1>
-          <nav className="flex items-center gap-3 text-sm">
-            <button type="button" onClick={() => setView("search")}
-              className={view === "search" ? "font-semibold text-blue-600" : "text-gray-600"}>
-              {t("nav.search")}
-            </button>
-            <button type="button" onClick={() => setView("about")}
-              className={view === "about" ? "font-semibold text-blue-600" : "text-gray-600"}>
-              {t("nav.about")}
-            </button>
-            <LanguageSwitch />
-          </nav>
-        </div>
-      </header>
+  const railBtn = (active: boolean, small = false) =>
+    `rail-btn ${active ? "active" : ""} ${small ? "h-9 w-9" : "h-11 w-11"} rounded-full flex items-center justify-center transition hover:bg-[var(--surface-2)]`;
 
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
-        {view === "about" ? (
-          <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="mb-2 text-lg font-semibold">{t("about.title")}</h2>
-            <p className="mb-4 text-gray-600">{t("about.body")}</p>
-            {/* spec §4：About 頁合併原 tech_stack 頁內容（tech stack 表 + 作者連結） */}
-            <ul className="mb-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-              {TECH_STACK.map((item) => (
-                <li key={item.label}>
-                  <a className="text-blue-600 hover:underline" target="_blank" rel="noreferrer"
-                     href={item.url}>{item.label}</a>
-                </li>
-              ))}
-            </ul>
-            <p className="text-sm text-gray-500">
-              <a className="text-blue-600 hover:underline" target="_blank" rel="noreferrer"
-                 href="https://github.com/taurus5650">GitHub</a>{" · "}
-              <a className="text-blue-600 hover:underline" target="_blank" rel="noreferrer"
-                 href="https://www.linkedin.com/in/sh-yin-lim/">LinkedIn</a>
-            </p>
-          </section>
-        ) : (
-          <>
-            <SearchForm countries={countries} value={form} onChange={setForm}
-              onSubmit={handleSearch} loading={status === "loading"} />
-            {status === "loading" && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <SkeletonCard /><SkeletonCard /><SkeletonCard />
+  return (
+    <>
+      {/* 背景場景（spec v3 §4）：深色 radial-gradient + 抽象曲線 SVG + 雙色燈光 +
+          兩顆跨面板光暈 (bronze/cyan)，是毛玻璃 blur 的視覺素材 */}
+      <div className="scene">
+        <div className="wall" />
+        <svg className="absolute inset-0 w-full h-full opacity-[0.22] pointer-events-none" viewBox="0 0 1440 900"
+          fill="none" preserveAspectRatio="xMidYMid slice">
+          <path d="M-100 850 C300 680 600 800 1000 480 C1300 200 1500 380 1600 -80" stroke="url(#bg-grad-1)" strokeWidth="4.5" strokeLinecap="round" />
+          <path d="M150 950 C450 580 750 850 1150 380" stroke="url(#bg-grad-2)" strokeWidth="2.5" strokeDasharray="10 10" />
+          <circle cx="85%" cy="15%" r="280" stroke="url(#bg-grad-3)" strokeWidth="1.8" />
+          <circle cx="85%" cy="15%" r="180" stroke="url(#bg-grad-3)" strokeWidth="1.2" />
+          <circle cx="20%" cy="80%" r="350" stroke="url(#bg-grad-1)" strokeWidth="1.8" />
+          <circle cx="20%" cy="80%" r="220" stroke="url(#bg-grad-1)" strokeWidth="1.2" strokeDasharray="6 6" />
+          <path d="M500 -50 C700 200 600 400 900 600" stroke="url(#bg-grad-2)" strokeWidth="1.5" />
+          <defs>
+            <linearGradient id="bg-grad-1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.8" />
+              <stop offset="100%" stopColor="#B57004" stopOpacity="0.1" />
+            </linearGradient>
+            <linearGradient id="bg-grad-2" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#B57004" stopOpacity="0.6" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.1" />
+            </linearGradient>
+            <linearGradient id="bg-grad-3" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#B57004" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.1" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div className="lamp-light" />
+        <div className="blob blob-bronze" />
+        <div className="blob blob-cyan" />
+        <div className="floor-shadow" />
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-6 flex gap-4">
+        {/* 桌機左側 icon rail */}
+        <aside className="glass hidden sm:flex flex-col items-center gap-3 rounded-full px-2.5 py-5 h-fit sticky top-6">
+          <button type="button" aria-label={t("nav.search")}
+            onClick={() => setView("search")} className={railBtn(view === "search")}>
+            <Icon name="search" />
+          </button>
+          <button type="button" aria-label={t("nav.about")}
+            onClick={() => setView("about")} className={railBtn(view === "about")}>
+            <Icon name="info" />
+          </button>
+          <div className="w-6 h-px bg-[var(--panel-border-dim)] my-2" />
+          <button type="button" aria-label={t("nav.theme")}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className={railBtn(false)}>
+            <Icon name={theme === "dark" ? "moon" : "sun"} />
+          </button>
+          <LanguageSwitch />
+        </aside>
+
+        <div className="flex-1 min-w-0">
+          {/* 手機頂部 bar（rail 在 sm 以下隱藏） */}
+          <div className="glass sm:hidden flex items-center justify-between rounded-3xl px-5 py-4 mb-5">
+            <h1 className="font-bold flex items-center gap-2 text-base text-[var(--text)] tracking-wide">
+              <Icon name="ticket" />
+              {t("app.title")}
+            </h1>
+            <div className="flex gap-2">
+              <button type="button" aria-label={t("nav.search")}
+                onClick={() => setView("search")} className={railBtn(view === "search", true)}>
+                <Icon name="search" size={16} />
+              </button>
+              <button type="button" aria-label={t("nav.about")}
+                onClick={() => setView("about")} className={railBtn(view === "about", true)}>
+                <Icon name="info" size={16} />
+              </button>
+              <button type="button" aria-label={t("nav.theme")}
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className={railBtn(false, true)}>
+                <Icon name={theme === "dark" ? "moon" : "sun"} size={16} />
+              </button>
+            </div>
+          </div>
+
+          {view === "about" ? (
+            <main className="glass rounded-[40px] p-6 sm:p-10 shadow-2xl">
+              <h2 className="text-2xl font-bold mb-5 text-[var(--text)]">{t("about.title")}</h2>
+              <p className="text-base text-[var(--text-muted)] leading-relaxed mb-8 max-w-2xl">{t("about.body")}</p>
+              {/* spec §4：About 頁合併原 tech_stack 頁內容（tech stack 表 + 作者連結） */}
+              <h3 className="font-bold text-lg mb-4 text-[var(--text)]">Tech Stack</h3>
+              <div className="rounded-3xl overflow-hidden mb-8 border border-[var(--panel-border-dim)] divide-y divide-[var(--panel-border-dim)] max-w-2xl shadow-sm">
+                {TECH_STACK.map((item, i) => (
+                  <div key={item.label} className={`flex p-4 text-sm ${i % 2 === 0 ? "bg-[var(--surface-2)]" : ""}`}>
+                    <a className="w-48 shrink-0 font-bold text-[var(--text)] hover:underline"
+                      target="_blank" rel="noreferrer" href={item.url}>{item.label}</a>
+                    <span className="text-[var(--text-muted)]">{pickLabel(item.role, lang)}</span>
+                  </div>
+                ))}
               </div>
-            )}
-            {status === "error" && <ErrorMessage message={errorMessage} />}
-            {status === "success" && <EventList events={events} />}
-          </>
-        )}
-      </main>
-    </div>
+              <p className="text-sm font-semibold text-[var(--text-muted)] pt-4 border-t border-[var(--panel-border-dim)]">
+                作者：
+                <a className="hover:underline transition" style={{ color: "var(--link)" }} target="_blank" rel="noreferrer"
+                  href="https://github.com/taurus5650">GitHub</a>
+              </p>
+            </main>
+          ) : (
+            <main className="glass rounded-[40px] p-6 sm:p-10 shadow-2xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                <h1 className="hidden sm:flex font-bold text-2xl items-center gap-3 text-[var(--text)] tracking-tight">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-[var(--text)] bg-[var(--surface-2)] border border-[var(--panel-border-dim)] shadow-inner">
+                    <Icon name="ticket" />
+                  </span>
+                  {t("app.title")}
+                </h1>
+              </div>
+              <SearchForm countries={countries} value={form} onChange={setForm}
+                onSubmit={handleSearch} loading={status === "loading"} />
+              {status === "loading" && (
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                  <SkeletonCard /><SkeletonCard /><SkeletonCard />
+                </div>
+              )}
+              {status === "error" && <ErrorMessage message={errorMessage} onRetry={handleSearch} />}
+              {status === "success" && <EventList events={events} />}
+            </main>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 ```
-
-（About 頁的技術棧一行改成 `Fly.io`——因為 v2 spec Phase 3 目標是 Fly.io，Phase 4 才遷 Cloud Run，不要寫死 Cloud Run 誤導 owner。）
 
 - [ ] **Step 3: Remove scaffold leftovers, run checks**
 
@@ -1983,17 +2461,29 @@ Expected: 全部乾淨。
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-開瀏覽器 `http://127.0.0.1:5173`，驗證：下拉選單有資料（18 個地區、12 個類別）、月份預先帶入本月、按搜尋出現 skeleton 再變卡片（或空結果畫面）、EN/中 切換會翻整頁文案、devtools 切到 375px 寬版面不跑版、切到 1440px 桌機版是多欄 grid、切去「關於」頁看得到 GitHub/LinkedIn 連結。
+開瀏覽器 `http://127.0.0.1:5173`，逐項驗證：
+
+1. **視覺對照**：另開 `docs/poc/20260719_155200_ui_design_v27.html`（本機直接開檔即可）併排比對——背景抽象曲線、雙色燈光、兩顆光暈、毛玻璃面板都要與 POC 一致（copper/ochre accent，不是舊的 indigo/orange）
+2. 下拉選單有資料（18 個地區、12 個類別）、月份預先帶入本月
+3. 國家選擇器在標題列右上角：台灣是漸層 active chip；日本/韓國是降權 (opacity-60) disabled chip，無「即將推出」文字
+4. 按搜尋出現 skeleton 再變卡片（或空結果畫面）；卡片 banner 三組漸層輪流，hover 時 banner 圖案有慢速 zoom
+5. 類別 chip（帶 icon）與搜尋膠囊裡的類別下拉是同一個 state——點其中一個，另一個要同步反映
+6. **主題切換**：rail 上點月亮/太陽，dark ↔ light 全頁換膚，兩個主題的玻璃都透亮
+7. EN/中 切換會翻整頁文案（含 About 的角色欄）
+8. devtools 切到 375px：rail 消失、頂部 bar 出現、卡片單欄、搜尋膠囊改直向堆疊；1440px：三欄 grid
+9. 「關於」頁：tech stack 表 + GitHub 連結
 
 `Ctrl+C` 結束 compose。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend && git commit -m "feat: assemble spa with search flow, about view and i18n"
+git add frontend && git commit -m "feat: assemble glass spa with theme toggle, search flow and about view"
 ```
 
-**Phase 1 結束狀態**：`docker-compose.dev.yml` 起得來，SPA 打新 `/api/v1` 全流程可用（下拉選單、搜尋、skeleton、空結果、錯誤、i18n 皆驗證過）。下一步是 Phase 2（清理舊 apps/assets、`backend/`+`config/` 目錄重構、settings.py 重寫解除 Read-block 摩擦）。
+**Phase 1 結束狀態**：`docker-compose.dev.yml` 起得來，SPA 打新 `/api/v1` 全流程可用
+（國家選擇器、搜尋、skeleton、空結果、錯誤、dark/light、i18n 皆驗證過）。
+下一步是 Phase 2（清理舊 apps/assets、`backend/`+`config/` 目錄重構、settings.py 重寫解除 Read-block 摩擦）。
 
 ---
 
@@ -2518,7 +3008,7 @@ test:
 .PHONY: run-prod
 run-prod:
 	docker build -t cef-local .
-	docker run --rm -e PORT=8080 -p 8080:8080 cef-local
+	docker run --rm -e PORT=8080 -e SECRET_KEY=local-run-only -p 8080:8080 cef-local
 ```
 
 - [ ] **Step 6: 驗證整條路徑**
@@ -2609,9 +3099,14 @@ cd backend && uv run python -m pytest . -v && cd ..
 
 - [ ] **Step 4: 本機 prod-like container smoke test（spec §8 要求，Phase 3 唯一一次真實部署前的最後防線）**
 
+Task 12 的 settings 刻意設計成 `DEBUG != "True"` 且沒注入 `SECRET_KEY` 時直接
+`ImproperlyConfigured` 拒絕啟動（設錯要立刻暴露，不吃不安全的預設值）。
+smoke test 必須帶一個假的 `SECRET_KEY`，否則 container 起不來、`/health` 永遠連不到，
+會誤判成「重構壞了什麼」而非「忘了設環境變數」。
+
 ```bash
 docker build -t cef-local .
-docker run --rm -e PORT=8080 -p 8080:8080 -d --name cef cef-local
+docker run --rm -e PORT=8080 -e SECRET_KEY=smoke-test-only -p 8080:8080 -d --name cef cef-local
 sleep 5
 curl -s http://127.0.0.1:8080/health
 ```
@@ -2858,7 +3353,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t smoke:latest .
-      - run: docker run -d -p 8080:8080 -e PORT=8080 -e ALLOWED_HOSTS='*' --name smoke smoke:latest
+      - run: docker run -d -p 8080:8080 -e PORT=8080 -e ALLOWED_HOSTS='*' -e SECRET_KEY=ci-smoke-only --name smoke smoke:latest
       - run: |
           for i in $(seq 1 15); do curl -sf http://localhost:8080/health && break || sleep 2; done
           curl -sf http://localhost:8080/ | grep -qi '<title>' || (echo "SPA index missing" && exit 1)
@@ -3003,6 +3498,21 @@ curl -s https://taiwan-culture-event-info.fly.dev/api/v1/countries | head -c 200
 git add README.md
 git commit -m "docs: fill in live url after fly.io deployment verified"
 git push origin master
+```
+
+- [ ] **Step 5b: 清掉 Task 15 留下的孤兒 volume**
+
+Task 15 從 `fly.toml` 移除了 `[[mounts]]`，但那只是不再掛載——`sqlite_data` 這個 volume
+本身還留在 Fly 帳號裡持續佔用資源（可能持續計費），需要手動刪除：
+
+```bash
+fly volumes list -a taiwan-culture-event-info
+```
+
+確認部署已成功、且 app 目前沒有任何 machine 在用這個 volume（`Attached VM` 欄位應為空）後：
+
+```bash
+fly volumes destroy <volume-id> -a taiwan-culture-event-info
 ```
 
 - [ ] **Step 6: 設定免費 uptime check，定期 ping `/health`**

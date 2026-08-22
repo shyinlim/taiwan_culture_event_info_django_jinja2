@@ -1,27 +1,24 @@
-# Culture Event Finder — React + Django API 重構設計 v2
+# Culture Event Finder — React + Django API 重構設計 v3
 
-> ⚠️ **SUPERSEDED (2026-07-19)** — 本文件已被 `2026-07-19-culture-event-finder-design-v3.md` 取代（v3 更新前端視覺方向為毛玻璃、country strip 常駐、POC gate 已通過）。執行時請開 v3，不要用本檔。
-
-
-- 日期：2026-07-18
-- 狀態：已與 owner 逐項確認並批准
-- 取代：`2026-07-11-react-django-refactor-design.md`（v1）
+- 日期：2026-07-19
+- 狀態：**SUPERSEDED**，由 `2026-08-22-culture-event-finder-design-v4.md` 取代
+- 取代：`2026-07-18-culture-event-finder-design-v2.md`（v2）
 - 前身：`taiwan_culture_event_info_django_jinja2`（Django + Jinja2 server-rendered）
 
-> 本文件自足。執行時不需開啟 v1。v1 已標記 SUPERSEDED，其中的 hosting 決策、
-> 清理清單與里程碑順序皆已失效。
+> 本文件自足。執行時不需開啟 v1 / v2。v2 已標記 SUPERSEDED。
+> v3 相對 v2 只改前端視覺方向（§4 / §4.1）——POC gate 已於 2026-07-19 通過，
+> 視覺定案為毛玻璃 (glassmorphism) 設計，POC 迭代至 v27。後端、部署、清理、測試各節與 v2 相同。
 
-## 0. v2 相對 v1 改了什麼（僅供追溯，執行時不需理會）
+## 0. v3 相對 v2 改了什麼（僅供追溯，執行時不需理會）
 
-| 項目 | v1 | v2 | 理由 |
+| 項目 | v2 | v3 | 理由 |
 |---|---|---|---|
-| Hosting 路徑 | 直接遷 Cloud Run，Fly.io 下線 | Phase 3 續用 Fly.io；Phase 4 才遷 Cloud Run | 降風險、先出貨。Fly app 仍存活，舊帳號可能吃 grandfathered 額度 |
-| Terraform | 主線 task，含 PAUSE POINT | 移到 Phase 4（另開 branch） | 移除主線唯一的 owner-gated 中斷點 |
-| 清理重構 | 最後一個 milestone，在部署之後 | 前移到 Phase 2，在上線之前 | 避免 Dockerfile 寫兩次；提早解除 settings.py 的 hook 摩擦 |
-| dev 環境 | 兩個裸 process | docker-compose 兩個 service | owner 現有習慣即 docker dev；符合市面主流做法 |
-| docker-compose | 在刪除清單 | 保留並改造成 dev 環境 | 同上 |
-| UI 設計 | 無 mockup，直接寫 React | Phase 0 加 POC HTML gate | owner 首次寫 React，fail-fast |
-| k8s | 未提及 | Phase 5 side quest，不進主線 | Fly / Cloud Run 皆非 k8s，manifest 與出貨路徑零交集 |
+| 視覺方向 | 「乾淨留白、簡化版 KKTIX 列表頁」 | 毛玻璃 (glassmorphism)：抽象曲線背景 + copper/ochre 單色 accent | POC 迭代 27 版後 owner 定案 |
+| 國家選擇器 | 「只有台灣時隱藏」 | 常駐選擇器，移到搜尋卡右上角：台灣 active + 日/韓 disabled chip | owner 要求明示多國 roadmap |
+| Dark/Light | 未提及 | 雙主題，CSS variables 驅動，icon rail 上切換 | POC 定案內容 |
+| 導覽 | header 文字連結 | 桌機左側 icon rail、手機頂部 bar | POC 定案內容 |
+| Icon | 未規範 | inline SVG stroke icon（不引 icon library）；badge 文案含裝飾性 emoji（見 §4 附註） | POC v27 帶入，與先前「不用 emoji」原則有出入，owner 未撤回原則前以 POC 為準 |
+| POC 定性 | 丟棄式，不進 repo | 保留於 `docs/poc/` 作 design reference | 檔案已按版本命名存於 repo，是唯一的視覺 source of truth |
 
 ## 1. 背景與定位
 
@@ -71,10 +68,12 @@ culture-event-finder/
 ├── frontend/                    # Vite + React + TypeScript
 │   ├── Dockerfile.dev           # dev 用 node container
 │   └── src/
-│       ├── components/          # SearchForm, EventList, EventCard,
-│       │                        # ErrorMessage, SkeletonCard, LanguageSwitch
+│       ├── components/          # SearchForm, EventList, EventCard, ErrorMessage,
+│       │                        # SkeletonCard, LanguageSwitch, Icon
+│       ├── design.css           # 毛玻璃 design system（CSS variables + .glass 等）
 │       ├── api.ts               # 集中所有 fetch 呼叫
 │       └── locales/             # zh.json / en.json
+├── docs/poc/                    # POC HTML 迭代紀錄（design reference，唯讀）
 ├── Dockerfile                   # prod multi-stage（repo root）
 ├── docker-compose.dev.yml       # dev 環境（repo root，不放 deployment_tcei/）
 └── fly.toml
@@ -139,34 +138,69 @@ GET /health
 ## 4. 前端設計
 
 - **Vite + React + TypeScript**：型別寫到夠用，不用進階泛型、不用 Redux、不用 server components。
-- **Tailwind CSS**：mobile-first utility。
+- **Tailwind CSS**：mobile-first utility，搭配 `design.css` 的 CSS variables（見 §4.1）。
 - **i18n**：UI 文案走 `locales/zh.json` / `en.json` + 一個輕量 context/hook
-  （不引重型 i18n 套件），右上角切換，預設中文。活動資料維持資料源語言。
+  （不引重型 i18n 套件），icon rail 上切換，預設中文。活動資料維持資料源語言。
 - **不用 react-router**：只有搜尋頁和 About 兩個畫面，用 in-app state 切換。
   這同時避開 SPA fallback routing 問題（WhiteNoise 不會 catch-all 到 index.html，
   BrowserRouter 重新整理會 404）。
-- 頁面結構：
-  - 搜尋列：國家（只有台灣時隱藏）、地區、類別、月份選擇器（年 + 月兩個 `<select>`；
-    刻意不用 `<input type="month">` — 桌面版 Firefox 與 Safari 全版本不支援，
-    會 fallback 成純文字框）、搜尋鈕
-  - 結果：卡片式列表 — 活動名稱、時間、地點（點擊開 Google Map）、票價、
-    售票狀態 badge；手機單欄、桌機多欄 grid
-  - Loading：skeleton 卡片
-  - 空結果與錯誤是兩種不同的畫面
-  - About 頁：合併原 tech_stack 頁內容（tech stack 表 + 作者連結）
-- 視覺方向：乾淨留白、清楚的層級，像簡化版 KKTIX 列表頁。
+- 頁面結構（依定案 POC `docs/poc/20260719_155200_ui_design_v27.html`）：
+  - **背景場景**：深色 radial-gradient 底 + 抽象曲線 SVG 線稿（低透明度、
+    bronze/cyan 漸層描邊）+ 雙色燈光 (`--lamp-1` 暖銅、`--lamp-2` 冷青) +
+    兩顆跨面板光暈 (bronze/cyan)，是毛玻璃 blur 的視覺素材
+  - **導覽**：桌機左側毛玻璃 icon rail（搜尋/關於/主題切換/語言切換）；
+    手機隱藏 rail，改頂部毛玻璃 bar
+  - **國家選擇器**：搬到搜尋卡標題列右上角，膠囊容器內：台灣是 active
+    (`.btn-primary`) chip；日本/韓國是 `opacity-60` disabled chip（不帶「即將推出」文字，
+    純用視覺降權表示未開放）。chip 內容 hardcode 在前端（未上線國家後端沒有資料）
+  - **搜尋列**：Airbnb 風格「搜尋膠囊」(`.search-capsule`) — 地區、類別、年、月四個
+    `search-field`（label 在上、`<select>` 在下，欄位間以 `border-right`/`border-bottom`
+    分隔），尾端一個圓形/膠囊搜尋鈕。月份維持年 + 月兩個 `<select>`；刻意不用
+    `<input type="month">` — 桌面版 Firefox 與 Safari 全版本不支援，會 fallback 成純文字框
+  - **類別 chips**：`地區/類別/年/月` 之外另有一列帶 icon 的類別快捷 chip
+    （展覽/表演/音樂/市集，各配一個 inline SVG icon：frame/masks/music/tent）。
+    與類別 `<select>` 是重複的兩個 UI 入口指向同一個 filter state，Task 9 實作時
+    只需接同一個 `value.category`，兩處 onChange 互相同步（不是各自獨立 state）
+  - **結果**：卡片式列表 — 漸層 banner + 白色線條幾何裝飾（三組輪流，hover 時
+    banner SVG 有 1.5s 慢速 zoom 動效）、活動名稱（hover 變 accent 色）、時間、
+    地點（點擊開 Google Map）、卡片底部一條分隔線後放票價 + 「詳細資訊」按鈕；
+    手機單欄、桌機三欄 grid。狀態 badge 文案含裝飾性 emoji（例：「🔥 熱賣中」，
+    見下方視覺方向附註）
+  - **Loading**：skeleton 卡片（`--skel` 變數，雙主題各自可見，含分隔線 + 票價列 skeleton）
+  - **空結果與錯誤是兩種不同的畫面**：各配一個大型線條 SVG 插圖，外層加
+    虛線邊框容器 (`border-dashed`) 與 `--surface-2` 底色；錯誤畫面附重試按鈕
+  - **About 頁**：合併原 tech_stack 頁內容（tech stack 表 + 作者連結），同樣走毛玻璃面板
+- **視覺方向（已凍結，POC v27）**：毛玻璃 (glassmorphism)。深色抽象背景
+  (`radial-gradient(circle at 80% 20%, #1e1812 0%, #05070f 65%)`)；
+  accent 是單一 copper/ochre 色系 `#B57004`（`--accent-cool: #7a4700` →
+  `--accent: #B57004` 漸層，取代 v14 的 indigo→orange 雙色系）；**不用粉紅/magenta**；
+  dark/light 雙主題由 CSS variables（`[data-theme]`）驅動，兩個主題都必須是
+  真正透亮的毛玻璃，不是換色而已。
+  **附註（與先前排除 emoji 的原則有出入）**：POC v27 的售票狀態 badge 用了裝飾性
+  emoji（「🔥 熱賣中」），這與 owner 稍早在 icon 系統上明確排除 emoji 的指示不一致。
+  v3 先照 POC 原樣寫入 spec（因為 owner 是在確認 v27 之後才要求把 spec 對齊 POC），
+  **但這處差異尚未經 owner 逐項確認**，實作 Task 9 前應提醒 owner 一次。
 
-### 4.1 POC HTML gate（Phase 0）
+### 4.1 POC HTML gate（Phase 0）— ✅ 已通過
 
-owner 首次寫 React。為避免視覺方向錯誤導致 6 個元件全部重寫，
-**寫 React 元件前必須先產出一頁靜態 POC HTML 並取得 owner 確認**。
+owner 首次寫 React。為避免視覺方向錯誤導致元件全部重寫，
+寫 React 元件前必須先產出靜態 POC HTML 並取得 owner 確認。
 
-- 形式：單一 `.html` 檔 + Tailwind CDN + 寫死的假資料，無 build step
-- 必須涵蓋：搜尋列、卡片 grid、skeleton 載入狀態、空結果畫面、錯誤畫面
-- **交付判準**：起一個 local server，截 375px（手機）與 1440px（桌機）兩張圖交給 owner。
-  owner 明確回覆確認後，此 gate 才算通過。
-- **定性：丟棄式 prototype。** HTML 檔本身不進 repo 主線，
-  但其中調校過的 Tailwind class 組合（卡片、badge、間距）直接抄進 React 元件的 JSX。
+- **狀態：gate 已於 2026-07-19 通過。** owner 迭代 27 版後定案
+  `docs/poc/20260719_155200_ui_design_v27.html`（口頭定案，未另交付截圖）。
+- **定性（v3 修訂）：POC 保留在 `docs/poc/` 作 design reference**，
+  是視覺的唯一 source of truth。寫 React 元件時對照該檔抄 CSS 與 Tailwind class 組合：
+  - `<style>` 區塊整段抄成 `frontend/src/design.css`（CSS variables、`.scene`/`.glass`/
+    `.search-capsule`/`.btn-primary`/`.btn-secondary` 等）
+  - inline SVG icon（search/info/moon/sun/calendar/pin/ticket/alert/refresh/
+    music/tent/masks/frame）抄成 `Icon.tsx` 元件，不引 icon library
+- 毛玻璃四要件（POC 迭代驗證出的經驗值，改 CSS 時不可破壞）：
+  1. 玻璃後方要有結構化視覺素材（v27 是抽象曲線 SVG + 雙色燈光）可供 blur 扭曲
+  2. 面板填色極低不透明度（dark 2%／light 55%）、v27 blur 加重到 36–40px
+     （比 v14 的 16–26px 更重，配合更暗的背景才不會糊成一片）、
+     `brightness(>1)` 讓面板比周圍亮
+  3. `::after` 斜向 sheen 高光，light/dark 各自獨立調校
+  4. 彩色光暈要**跨越玻璃面板邊界**（外側銳利、內側模糊）
 
 ## 5. 開發環境
 
@@ -325,6 +359,7 @@ Phase 4 必須設定明確 deadline（建議 Phase 3 上線後 30 天內），�
 - `fly.toml` — Phase 3 仍要用它部署，Phase 4 遷移完成後才刪
 - `docker-compose.dev.yml`、`frontend/Dockerfile.dev` — dev 環境，
   已於 Phase 1 建立在 repo root / frontend/，不在 `deployment_tcei/` 內
+- `docs/poc/` — 視覺 design reference（§4.1）
 - `health_check`（改為 `backend/health/`）
 - SSL workaround（封裝進 provider）
 
@@ -354,10 +389,10 @@ Phase 4 必須設定明確 deadline（建議 Phase 3 上線後 30 天內），�
 ## 9. 里程碑
 
 ```
-Phase 0 — 規劃
-  spec v2 + plan v2 定稿
-  POC HTML → owner 確認（gate）
-  owner 查 fly.io billing（blocking）
+Phase 0 — 規劃 ✅（2026-07-19 完成）
+  spec + plan 定稿（本文件 + plan v3）
+  POC HTML → owner 確認（gate）✅ docs/poc/20260719_004501_ui_design_v14.html
+  owner 查 fly.io billing（blocking）— 尚未回報，Task 1 開工前必須完成
   結束狀態：plan 定稿、視覺方向凍結、Phase 4 是否需要 deadline 已確定
 
 Phase 1 — 開發（backend + frontend）
@@ -400,7 +435,10 @@ Phase 5 — k8s（另開 branch，隨時，純學習）
 - **MoC 回應格式在開發期間可能改版**（政府 open data 常見）：測試用 `responses` mock
   固定的是撰寫當下的格式，mock 全綠不代表真實 API 沒變。緩解：Phase 1 的 checkpoint
   （Task 5）與 Phase 3 部署驗證（Task 17）各打一次真實 MoC 核對格式。
-- Owner 首次寫 React/TS — code 難度刻意壓低，元件小而少（約 6 個），
-  且有 §4.1 的 POC gate 先凍結視覺方向。
+- **`backdrop-filter` 的裝置負擔**：毛玻璃大量使用 `backdrop-filter: blur()`，
+  低階手機可能掉幀。已緩解：POC 已把 blur 壓在 16–26px、面板數量少（單一大面板 + rail）；
+  若實測仍卡，fallback 是提高 `--panel` 不透明度並移除 blur（CSS variables 一處改）。
+- Owner 首次寫 React/TS — code 難度刻意壓低，元件小而少，
+  且 §4.1 的 POC gate 已凍結視覺方向，v14 檔案是可對照的 source of truth。
 - `main_project/main_project/settings.py` 被本地 hook `protect_sensitive.py` 擋住 Read，
   Phase 1 期間只能透過 Bash python-snippet 修改。Phase 2 產出全新 settings 後此摩擦解除。

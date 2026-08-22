@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Culture Event Finder — POC v27 (v25 + Double Glassmorphism)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root, [data-theme="dark"] {
+    /* High-contrast luxury mesh gradient background - v20 Warm Spotlight */
+    --wall-grad: radial-gradient(circle at 80% 20%, #1e1812 0%, #05070f 65%); 
+    --lamp-1: rgba(181, 112, 4, 0.25); 
+    --lamp-2: rgba(14, 165, 233, 0.12); 
+    --floor: rgba(1, 2, 8, 0.95);
+
+    /* Glass panel & text variables for Dark Mode */
+    --panel: rgba(255, 255, 255, 0.02); 
+    --panel-border: rgba(255, 255, 255, 0.32); 
+    --panel-border-dim: rgba(255, 255, 255, 0.08);
+    --sheen: rgba(255, 255, 255, 0.08);
+    --surface-2: rgba(255, 255, 255, 0.03); 
+    --chip-dis: rgba(255, 255, 255, 0.04);
+    --skel: rgba(255, 255, 255, 0.06);
+    --text: #ffffff; 
+    --text-muted: #cbd5e1; 
+    --text-faint: #94a3b8;
+    
+    /* Primary Action: Copper Ochre (#B57004) Gradient designed by Antigravity */
+    --accent: #B57004; 
+    --accent-cool: #7a4700; 
+    --accent-deep: #543000;
+    --link: #d99c38; 
+  }
+  [data-theme="light"] {
+    /* Elegant light theme gradient background - v20 Warm Sand */
+    --wall-grad: radial-gradient(circle at 80% 20%, #fef3c7 0%, #cbd5e1 65%);
+    --lamp-1: rgba(181, 112, 4, 0.2);
+    --lamp-2: rgba(14, 165, 233, 0.08);
+    --floor: rgba(15, 23, 42, 0.05);
+
+    /* Glass panel & text variables for Light Mode */
+    --panel: rgba(255, 255, 255, 0.55); 
+    --panel-border: rgba(255, 255, 255, 0.95);
+    --panel-border-dim: rgba(15, 23, 42, 0.15);
+    --sheen: rgba(255, 255, 255, 0.35);
+    --surface-2: rgba(15, 23, 42, 0.05); 
+    --chip-dis: rgba(15, 23, 42, 0.08);
+    --skel: rgba(15, 23, 42, 0.06);
+    --text: #0f172a; 
+    --text-muted: #334155;
+    --text-faint: #64748b;
+    --accent: #B57004;
+    --accent-cool: #7a4700;
+    --accent-deep: #543000;
+    --link: #B57004;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Noto Sans TC", sans-serif;
+    background: #05070f;
+    position: relative;
+    isolation: isolate;
+    transition: background .3s;
+  }
+
+  /* Designed abstract background vectors to highlight the frosted glass blur */
+  .scene { position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+  .wall {
+    position: absolute; inset: 0;
+    background: var(--wall-grad);
+    transition: background .3s;
+  }
+  .lamp-light {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 65% 50% at 85% 5%, var(--lamp-1), transparent 75%),
+      radial-gradient(ellipse 55% 45% at 15% 95%, var(--lamp-2), transparent 80%);
+    pointer-events: none;
+  }
+  .floor-shadow {
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, transparent 55%, var(--floor) 100%);
+    pointer-events: none;
+  }
+  
+  /* Ambient blobs - High contrast amber & cyan light projection - v20 Warm Spotlight */
+  .blob { position: absolute; border-radius: 9999px; opacity: 0.75; filter: blur(36px); pointer-events: none; }
+  .blob-bronze { width: 550px; height: 550px; top: -120px; right: 5%;
+    background: radial-gradient(circle, rgba(181,112,4,0.2) 0%, rgba(122,71,0,0.06) 50%, transparent 80%); }
+  .blob-cyan { width: 450px; height: 450px; bottom: 15%; left: 35%;
+    background: radial-gradient(circle, rgba(14,165,233,0.15) 0%, rgba(3,105,161,0.04) 50%, transparent 80%); }
+
+  /* Premium transparent glassmorphism panel styling */
+  .glass {
+    position: relative;
+    background: var(--panel);
+    border: 1.5px solid var(--panel-border-dim);
+    border-top: 1.8px solid var(--panel-border);
+    border-left: 1.8px solid var(--panel-border-dim); /* Enhanced bevel */
+    border-right: 1.8px solid var(--panel-border); 
+    box-shadow: 
+      0 40px 90px -25px rgba(0,0,0,0.85),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(40px) saturate(160%) brightness(1.05); 
+    -webkit-backdrop-filter: blur(40px) saturate(160%) brightness(1.05);
+    transition: background .3s, border-color .3s;
+  }
+  [data-theme="light"] .glass {
+    backdrop-filter: blur(36px) saturate(150%) brightness(1.02);
+    -webkit-backdrop-filter: blur(36px) saturate(150%) brightness(1.02);
+    box-shadow: 0 40px 90px -25px rgba(15,23,42,0.1);
+  }
+  /* Glossy diagonal sheen reflection on glass surface */
+  .glass::after {
+    content: "";
+    position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 20%, transparent 40%);
+  }
+  [data-theme="light"] .glass::after {
+    background: linear-gradient(135deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.1) 25%, transparent 50%);
+  }
+  .glass > * { position: relative; z-index: 1; }
+
+  /* Unified Search Bar styling */
+  .search-capsule {
+    display: flex;
+    background: var(--surface-2);
+    border: 1px solid var(--panel-border-dim);
+    box-shadow: 0 4px 20px -5px rgba(0,0,0,0.2);
+    overflow: hidden;
+    transition: box-shadow 0.3s, border-color 0.3s;
+  }
+  .search-capsule:hover, .search-capsule:focus-within {
+    box-shadow: 0 8px 30px -5px rgba(0,0,0,0.3);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  [data-theme="light"] .search-capsule:hover { border-color: rgba(15, 23, 42, 0.3); }
+  .search-field {
+    flex: 1;
+    position: relative;
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 1px solid var(--panel-border-dim);
+    transition: background 0.2s;
+  }
+  @media (min-width: 640px) {
+    .search-field {
+      border-bottom: none;
+      border-right: 1px solid var(--panel-border-dim);
+      padding: 0.5rem 1rem;
+    }
+  }
+  .search-field:last-of-type { border-bottom: none; border-right: none; }
+  .search-field:hover { background: rgba(255, 255, 255, 0.04); }
+  [data-theme="light"] .search-field:hover { background: rgba(15, 23, 42, 0.03); }
+  
+  .search-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 2px;
+  }
+  .search-select {
+    background: transparent !important;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 600;
+    border: none;
+    outline: none;
+    appearance: none;
+    cursor: pointer;
+    width: 100%;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-cool), var(--accent)); 
+    color: #ffffff;
+    border-radius: 9999px;
+    font-weight: 600;
+    transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+  }
+  .btn-primary:hover {
+    background: var(--accent);
+    transform: scale(1.02);
+    box-shadow: 0 8px 25px -5px var(--accent-cool);
+  }
+  
+  .btn-secondary {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-muted);
+    border-radius: 9999px;
+    font-weight: 500;
+    transition: all 0.2s ease-out;
+  }
+  .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  [data-theme="light"] .btn-secondary {
+    background: rgba(15, 23, 42, 0.04);
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    color: var(--text-muted);
+  }
+  [data-theme="light"] .btn-secondary:hover {
+    background: rgba(15, 23, 42, 0.1);
+    border-color: rgba(15, 23, 42, 0.2);
+    color: var(--text);
+  }
+
+  .chip.active {
+    background: linear-gradient(135deg, var(--accent-cool), var(--accent)) !important;
+    color: #ffffff !important;
+    font-weight: 600;
+    border-color: transparent !important;
+    box-shadow: 0 4px 15px -3px var(--accent-cool);
+  }
+
+  .rail-btn.active { 
+    background: linear-gradient(135deg, var(--accent-cool), var(--accent)); 
+    color: #ffffff; 
+    box-shadow: 0 4px 15px -3px var(--accent-cool);
+  }
+
+  .card-hover {
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+  }
+  .card-hover:hover { transform: translateY(-6px); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6); border-color: rgba(255,255,255,0.15); }
+  [data-theme="light"] .card-hover:hover { box-shadow: 0 25px 50px -12px rgba(15,23,42,0.2); }
+  
+  /* Image zoom animation */
+  .card-img-svg { transition: transform 1.5s cubic-bezier(0.16, 1, 0.3, 1); }
+  .card-hover:hover .card-img-svg { transform: scale(1.08); }
+
+  .icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body class="text-[var(--text)] min-h-screen transition-colors">
+
+<div class="scene">
+  <div class="wall"></div>
+  <svg class="absolute inset-0 w-full h-full opacity-[0.22] pointer-events-none" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+    <path d="M-100 850 C300 680 600 800 1000 480 C1300 200 1500 380 1600 -80" stroke="url(#bg-grad-1)" stroke-width="4.5" stroke-linecap="round"/>
+    <path d="M150 950 C450 580 750 850 1150 380" stroke="url(#bg-grad-2)" stroke-width="2.5" stroke-dasharray="10 10"/>
+    <circle cx="85%" cy="15%" r="280" stroke="url(#bg-grad-3)" stroke-width="1.8"/>
+    <circle cx="85%" cy="15%" r="180" stroke="url(#bg-grad-3)" stroke-width="1.2"/>
+    <circle cx="20%" cy="80%" r="350" stroke="url(#bg-grad-1)" stroke-width="1.8"/>
+    <circle cx="20%" cy="80%" r="220" stroke="url(#bg-grad-1)" stroke-width="1.2" stroke-dasharray="6 6"/>
+    <path d="M500 -50 C700 200 600 400 900 600" stroke="url(#bg-grad-2)" stroke-width="1.5"/>
+    
+    <defs>
+      <linearGradient id="bg-grad-1" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.8"/>
+        <stop offset="100%" stop-color="#B57004" stop-opacity="0.1"/>
+      </linearGradient>
+      <linearGradient id="bg-grad-2" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#B57004" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.1"/>
+      </linearGradient>
+      <linearGradient id="bg-grad-3" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#B57004" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.1"/>
+      </linearGradient>
+    </defs>
+  </svg>
+  <div class="lamp-light"></div>
+  <div class="blob blob-bronze"></div>
+  <div class="blob blob-cyan"></div>
+  <div class="floor-shadow"></div>
+</div>
+
+<svg width="0" height="0" class="absolute">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22z"/><circle cx="12" cy="9.5" r="2.3"/></symbol>
+    <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M3 9a2 2 0 0 1 0 4v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a2 2 0 0 1 0-4V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2z"/><path d="M12 5v14" stroke-dasharray="2 3"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-tent" viewBox="0 0 24 24"><path d="M19 20L12 4 5 20"/><path d="M12 15L9 20h6z"/></symbol>
+    <symbol id="i-masks" viewBox="0 0 24 24"><path d="M4 10c0-4 4-8 8-8s8 4 8 8c0 5-4 10-8 10-4 0-8-5-8-10z"/><path d="M9 9h.01M15 9h.01M12 14c-1 0-2 .5-2 1h4c0-.5-1-1-2-1z"/></symbol>
+    <symbol id="i-frame" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M3 9h18M9 21V9"/></symbol>
+  </defs>
+</svg>
+
+<div class="max-w-7xl mx-auto px-4 py-6 flex gap-4">
+
+  <!-- Desktop Icon rail -->
+  <aside class="glass hidden sm:flex flex-col items-center gap-3 rounded-full px-2.5 py-5 h-fit sticky top-6">
+    <button onclick="showScreen('search')" id="rail-search" class="rail-btn active h-11 w-11 rounded-full flex items-center justify-center transition"><svg class="icon"><use href="#i-search"/></svg></button>
+    <button onclick="showScreen('about')" id="rail-about" class="rail-btn h-11 w-11 rounded-full flex items-center justify-center transition hover:bg-[var(--surface-2)]"><svg class="icon"><use href="#i-info"/></svg></button>
+    <div class="w-6 h-px bg-[var(--panel-border-dim)] my-2"></div>
+    <button onclick="toggleTheme()" id="theme-btn" class="h-11 w-11 rounded-full flex items-center justify-center hover:bg-[var(--surface-2)]"><svg class="icon"><use href="#i-moon"/></svg></button>
+    <button onclick="toggleLang()" class="btn-secondary h-11 w-11 rounded-full flex items-center justify-center text-sm font-semibold">EN</button>
+  </aside>
+
+  <div class="flex-1 min-w-0">
+
+    <!-- Mobile top bar -->
+    <div class="glass sm:hidden flex items-center justify-between rounded-3xl px-5 py-4 mb-5">
+      <h1 class="font-bold flex items-center gap-2 text-base text-[var(--text)] tracking-wide">
+        <svg class="icon"><use href="#i-ticket"/></svg>
+        Event Finder
+      </h1>
+      <div class="flex gap-2">
+        <button onclick="showScreen('search')" id="rail-search-m" class="rail-btn active h-9 w-9 rounded-full flex items-center justify-center"><svg class="icon"><use href="#i-search"/></svg></button>
+        <button onclick="showScreen('about')" id="rail-about-m" class="rail-btn h-9 w-9 rounded-full flex items-center justify-center"><svg class="icon"><use href="#i-info"/></svg></button>
+        <button onclick="toggleTheme()" class="h-9 w-9 rounded-full flex items-center justify-center"><svg class="icon"><use href="#i-moon"/></svg></button>
+      </div>
+    </div>
+
+    <!-- ===== SEARCH SCREEN ===== -->
+    <main id="screen-search" class="glass rounded-[40px] p-6 sm:p-10 shadow-2xl">
+
+      <div class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <h1 class="hidden sm:flex font-bold text-2xl items-center gap-3 text-[var(--text)] tracking-tight">
+          <span class="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-[var(--text)] bg-[var(--surface-2)] border border-[var(--panel-border-dim)] shadow-inner">
+            <svg class="icon"><use href="#i-ticket"/></svg>
+          </span>
+          Culture Event Finder
+        </h1>
+        
+        <!-- Country selector moved to top right to act as a global switch -->
+        <div class="flex items-center gap-2 self-start md:self-auto bg-[var(--surface-2)] p-1.5 rounded-full border border-[var(--panel-border-dim)] shadow-sm">
+          <button class="btn-primary shrink-0 flex items-center gap-2 px-4 py-1.5 text-sm shadow">
+            <span class="h-5 w-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-bold">TW</span> 台灣
+          </button>
+          <button disabled class="shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-[var(--text-muted)] cursor-not-allowed opacity-60">
+            <span class="h-5 w-5 rounded-full bg-[var(--panel-border-dim)] flex items-center justify-center text-[10px] font-bold">JP</span> 日本
+          </button>
+          <button disabled class="shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-[var(--text-muted)] cursor-not-allowed opacity-60">
+            <span class="h-5 w-5 rounded-full bg-[var(--panel-border-dim)] flex items-center justify-center text-[10px] font-bold">KR</span> 韓國
+          </button>
+        </div>
+      </div>
+
+      <!-- Unified Airbnb-style Search Capsule -->
+      <form class="search-capsule mb-8 flex-col sm:flex-row rounded-3xl sm:rounded-full">
+        <div class="search-field">
+          <label class="search-label">地區 Region</label>
+          <select class="search-select text-[var(--text)]">
+            <option class="text-black">全部地區 (All)</option>
+            <option class="text-black">臺北 Taipei</option>
+            <option class="text-black">臺中 Taichung</option>
+            <option class="text-black">高雄 Kaohsiung</option>
+          </select>
+        </div>
+        <div class="search-field">
+          <label class="search-label">類別 Category</label>
+          <select class="search-select text-[var(--text)]">
+            <option class="text-black">全部類別 (All)</option>
+            <option class="text-black">展覽 Exhibition</option>
+            <option class="text-black">表演 Performance</option>
+            <option class="text-black">音樂 Music</option>
+          </select>
+        </div>
+        <div class="search-field">
+          <label class="search-label">年份 Year</label>
+          <select class="search-select text-[var(--text)]">
+            <option class="text-black">2026</option>
+            <option class="text-black">2025</option>
+          </select>
+        </div>
+        <div class="search-field">
+          <label class="search-label">月份 Month</label>
+          <select class="search-select text-[var(--text)]">
+            <option class="text-black">07 月 (Jul)</option>
+            <option class="text-black">08 月 (Aug)</option>
+          </select>
+        </div>
+        <div class="p-3 sm:p-2 flex items-center justify-center">
+          <button type="button" onclick="showResultState('results')" class="btn-search w-full sm:w-12 h-12 rounded-2xl sm:rounded-full flex items-center justify-center text-sm shadow-lg gap-2 bg-gradient-to-br from-[var(--accent-cool)] to-[var(--accent)] hover:scale-105 transition-transform text-white">
+            <svg class="icon" style="stroke:white"><use href="#i-search"/></svg>
+            <span class="sm:hidden font-semibold">搜尋</span>
+          </button>
+        </div>
+      </form>
+
+      <!-- Category chips (Enhanced with Icons & Tooltips) -->
+      <div class="flex flex-wrap gap-2.5 mb-8">
+        <button onclick="setChip(this)" class="chip active flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium">
+          全部
+        </button>
+        <button onclick="setChip(this)" class="chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium">
+          <svg class="icon" style="width:14px;height:14px"><use href="#i-frame"/></svg>展覽
+        </button>
+        <button onclick="setChip(this)" class="chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium">
+          <svg class="icon" style="width:14px;height:14px"><use href="#i-masks"/></svg>表演
+        </button>
+        <button onclick="setChip(this)" class="chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium">
+          <svg class="icon" style="width:14px;height:14px"><use href="#i-music"/></svg>音樂
+        </button>
+        <button onclick="setChip(this)" class="chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium">
+          <svg class="icon" style="width:14px;height:14px"><use href="#i-tent"/></svg>市集
+        </button>
+      </div>
+
+      <!-- State switcher (POC only) -->
+      <div class="flex flex-wrap items-center gap-3 mb-6 p-3 rounded-2xl bg-[var(--surface-2)] border border-[var(--panel-border-dim)] w-fit text-xs backdrop-blur-sm">
+        <span class="text-[var(--text-faint)] font-bold tracking-wide">POC 狀態：</span>
+        <button onclick="showResultState('results')" class="hover:text-[var(--text)] transition" style="color:var(--link)">有結果</button>
+        <div class="w-1 h-1 rounded-full bg-[var(--text-faint)]"></div>
+        <button onclick="showResultState('loading')" class="hover:text-[var(--text)] transition" style="color:var(--link)">載入中</button>
+        <div class="w-1 h-1 rounded-full bg-[var(--text-faint)]"></div>
+        <button onclick="showResultState('empty')" class="hover:text-[var(--text)] transition" style="color:var(--link)">無資料</button>
+        <div class="w-1 h-1 rounded-full bg-[var(--text-faint)]"></div>
+        <button onclick="showResultState('error')" class="hover:text-[var(--text)] transition" style="color:var(--link)">錯誤</button>
+      </div>
+
+      <!-- Results grid — premium translucent glass cards -->
+      <div id="state-results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="card-hover group rounded-3xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border-dim)] transition-all duration-300">
+          <div class="h-32 relative flex items-end p-4 overflow-hidden" style="background:linear-gradient(135deg,#c2410c,#d97706)">
+            <svg class="card-img-svg absolute inset-0 w-full h-full" viewBox="0 0 300 128" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.2" preserveAspectRatio="xMidYMid slice">
+              <circle cx="248" cy="20" r="38"/>
+              <circle cx="248" cy="20" r="24" stroke-dasharray="3 5"/>
+              <path d="M30 92 L58 44 L86 92 Z"/>
+              <path d="M140 20 V44 M128 32 H152" stroke-width="1.6"/>
+            </svg>
+            <span class="relative text-xs font-semibold bg-black/50 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-sm">🔥 熱賣中</span>
+          </div>
+          <div class="p-6">
+            <h3 class="font-bold text-lg leading-snug mb-3 text-[var(--text)] group-hover:text-[var(--link)] transition-colors">臺北當代藝術館：光影展</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-2 flex items-center gap-2"><svg class="icon opacity-70" style="width:16px;height:16px"><use href="#i-calendar"/></svg>2026/07/20 10:00–18:00</p>
+            <a href="#" class="text-sm hover:underline flex items-start gap-2 mb-5" style="color:var(--link)"><svg class="icon mt-0.5 opacity-70" style="width:16px;height:16px"><use href="#i-pin"/></svg><span class="leading-relaxed">臺北市大同區長安西路 39 號</span></a>
+            <div class="flex items-center justify-between border-t border-[var(--panel-border-dim)] pt-4 mt-2">
+              <p class="text-sm font-bold text-[var(--text)]">NT$ 300</p>
+              <button class="text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--surface-2)] text-[var(--text)] hover:bg-white/10 transition">詳細資訊</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-hover group rounded-3xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border-dim)] transition-all duration-300">
+          <div class="h-32 relative flex items-end p-4 overflow-hidden" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6)">
+            <svg class="card-img-svg absolute inset-0 w-full h-full" viewBox="0 0 300 128" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.2" preserveAspectRatio="xMidYMid slice">
+              <rect x="220" y="18" width="52" height="52" transform="rotate(16 246 44)"/>
+              <path d="M20 30 A46 46 0 0 1 66 76" stroke-dasharray="3 5"/>
+              <path d="M120 84 C150 40 200 96 244 60" stroke-dasharray="1 7" stroke-linecap="round"/>
+            </svg>
+            <span class="relative text-xs font-semibold bg-black/50 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-sm">已售完</span>
+          </div>
+          <div class="p-6">
+            <h3 class="font-bold text-lg leading-snug mb-3 text-[var(--text)] group-hover:text-[var(--link)] transition-colors">國家音樂廳：夏夜交響</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-2 flex items-center gap-2"><svg class="icon opacity-70" style="width:16px;height:16px"><use href="#i-calendar"/></svg>2026/07/22 19:30–21:30</p>
+            <a href="#" class="text-sm hover:underline flex items-start gap-2 mb-5" style="color:var(--link)"><svg class="icon mt-0.5 opacity-70" style="width:16px;height:16px"><use href="#i-pin"/></svg><span class="leading-relaxed">臺北市中正區中山南路 21-1 號</span></a>
+            <div class="flex items-center justify-between border-t border-[var(--panel-border-dim)] pt-4 mt-2">
+              <p class="text-sm font-bold text-[var(--text)]">NT$ 800</p>
+              <button class="text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--surface-2)] text-[var(--text)] hover:bg-white/10 transition">詳細資訊</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-hover group rounded-3xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border-dim)] transition-all duration-300">
+          <div class="h-32 relative flex items-end p-4 overflow-hidden" style="background:linear-gradient(135deg,#0d9488,#115e59)">
+            <svg class="card-img-svg absolute inset-0 w-full h-full" viewBox="0 0 300 128" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.2" preserveAspectRatio="xMidYMid slice">
+              <path d="M252 14 C255 34 262 41 282 44 C262 47 255 54 252 74 C249 54 242 47 222 44 C242 41 249 34 252 14 Z"/>
+              <circle cx="52" cy="76" r="30"/>
+              <circle cx="52" cy="76" r="18" stroke-dasharray="3 5"/>
+              <path d="M140 26 L166 70 L114 70 Z"/>
+            </svg>
+            <span class="relative text-xs font-semibold bg-black/50 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-sm">免費</span>
+          </div>
+          <div class="p-6">
+            <h3 class="font-bold text-lg leading-snug mb-3 text-[var(--text)] group-hover:text-[var(--link)] transition-colors">松山文創園區：手作市集</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-2 flex items-center gap-2"><svg class="icon opacity-70" style="width:16px;height:16px"><use href="#i-calendar"/></svg>2026/07/25 全日</p>
+            <a href="#" class="text-sm hover:underline flex items-start gap-2 mb-5" style="color:var(--link)"><svg class="icon mt-0.5 opacity-70" style="width:16px;height:16px"><use href="#i-pin"/></svg><span class="leading-relaxed">臺北市信義區光復南路 133 號</span></a>
+            <div class="flex items-center justify-between border-t border-[var(--panel-border-dim)] pt-4 mt-2">
+              <p class="text-sm font-bold text-[var(--text)]">免費入場</p>
+              <button class="text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--surface-2)] text-[var(--text)] hover:bg-white/10 transition">詳細資訊</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skeleton loading -->
+      <div id="state-loading" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="rounded-3xl bg-[var(--surface-2)] border border-[var(--panel-border-dim)] p-6 animate-pulse space-y-4">
+          <div class="h-32 bg-[var(--skel)] rounded-2xl -m-6 mb-4"></div>
+          <div class="h-5 bg-[var(--skel)] rounded w-3/4"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-1/2"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-2/3"></div>
+          <div class="border-t border-[var(--panel-border-dim)] pt-4 mt-4"><div class="h-4 bg-[var(--skel)] rounded w-1/3"></div></div>
+        </div>
+        <div class="rounded-3xl bg-[var(--surface-2)] border border-[var(--panel-border-dim)] p-6 animate-pulse space-y-4">
+          <div class="h-32 bg-[var(--skel)] rounded-2xl -m-6 mb-4"></div>
+          <div class="h-5 bg-[var(--skel)] rounded w-3/4"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-1/2"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-2/3"></div>
+          <div class="border-t border-[var(--panel-border-dim)] pt-4 mt-4"><div class="h-4 bg-[var(--skel)] rounded w-1/3"></div></div>
+        </div>
+        <div class="rounded-3xl bg-[var(--surface-2)] border border-[var(--panel-border-dim)] p-6 animate-pulse space-y-4">
+          <div class="h-32 bg-[var(--skel)] rounded-2xl -m-6 mb-4"></div>
+          <div class="h-5 bg-[var(--skel)] rounded w-3/4"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-1/2"></div>
+          <div class="h-4 bg-[var(--skel)] rounded w-2/3"></div>
+          <div class="border-t border-[var(--panel-border-dim)] pt-4 mt-4"><div class="h-4 bg-[var(--skel)] rounded w-1/3"></div></div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="state-empty" class="hidden text-center py-24 px-4 bg-[var(--surface-2)] rounded-3xl border border-[var(--panel-border-dim)] border-dashed mt-4">
+        <svg class="mx-auto mb-5" style="width:80px;height:80px" viewBox="0 0 100 100" fill="none" stroke="var(--text-faint)" stroke-width="1.5">
+          <circle cx="44" cy="44" r="26"/>
+          <path d="M63 63 L84 84" stroke-linecap="round"/>
+          <path d="M44 10 V2 M44 86 v-8" stroke-dasharray="2 4"/>
+          <path d="M8 44 H16 M72 44 h8" stroke-dasharray="2 4"/>
+        </svg>
+        <p class="text-[var(--text)] font-bold text-lg mb-2">找不到符合條件的活動</p>
+        <p class="text-[var(--text-muted)] text-sm max-w-sm mx-auto">試試看更換地區、類別或月份，或者清除篩選條件重新搜尋。</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="state-error" class="hidden text-center py-24 px-4 bg-[var(--surface-2)] rounded-3xl border border-[var(--panel-border-dim)] border-dashed mt-4">
+        <svg class="mx-auto mb-5" style="width:80px;height:80px" viewBox="0 0 100 100" fill="none" stroke="var(--accent)" stroke-width="1.5">
+          <path d="M50 12 L92 84 L8 84 Z" stroke-linejoin="round"/>
+          <path d="M50 38 V60" stroke-linecap="round"/>
+          <circle cx="50" cy="72" r="2" fill="var(--accent)"/>
+        </svg>
+        <p class="text-[var(--text)] font-bold text-lg mb-2">資料讀取失敗</p>
+        <p class="text-[var(--text-muted)] text-sm mb-6">上游 API 暫時無法回應，請檢查網路連線或稍後再試。</p>
+        <button class="btn-secondary rounded-full px-6 py-2.5 text-sm font-bold inline-flex items-center gap-2 transition hover:scale-105">
+          <svg class="icon"><use href="#i-refresh"/></svg>重新整理
+        </button>
+      </div>
+
+    </main>
+
+    <!-- ===== ABOUT SCREEN ===== -->
+    <main id="screen-about" class="hidden glass rounded-[40px] p-6 sm:p-10 shadow-2xl">
+      <h2 class="text-2xl font-bold mb-5 text-[var(--text)]">關於 Culture Event Finder</h2>
+      <p class="text-base text-[var(--text-muted)] leading-relaxed mb-8 max-w-2xl">
+        整合台灣文化部公開資料的活動搜尋工具。以 country provider 架構設計，
+        未來可擴充其他國家的公開資料源（見搜尋頁上方國家列）。
+      </p>
+
+      <h3 class="font-bold text-lg mb-4 text-[var(--text)]">Tech Stack</h3>
+      <div class="rounded-3xl overflow-hidden mb-8 border border-[var(--panel-border-dim)] divide-y divide-[var(--panel-border-dim)] max-w-2xl shadow-sm">
+        <div class="flex p-4 text-sm bg-[var(--surface-2)]"><span class="w-48 font-bold text-[var(--text)]">Django 5.2 LTS</span><span class="text-[var(--text-muted)]">後端框架</span></div>
+        <div class="flex p-4 text-sm"><span class="w-48 font-bold text-[var(--text)]">uv</span><span class="text-[var(--text-muted)]">依賴管理</span></div>
+        <div class="flex p-4 text-sm bg-[var(--surface-2)]"><span class="w-48 font-bold text-[var(--text)]">toolkitsy</span><span class="text-[var(--text-muted)]">Logging</span></div>
+        <div class="flex p-4 text-sm"><span class="w-48 font-bold text-[var(--text)]">React + TypeScript</span><span class="text-[var(--text-muted)]">前端框架</span></div>
+        <div class="flex p-4 text-sm bg-[var(--surface-2)]"><span class="w-48 font-bold text-[var(--text)]">Vite</span><span class="text-[var(--text-muted)]">前端 build tool</span></div>
+        <div class="flex p-4 text-sm"><span class="w-48 font-bold text-[var(--text)]">Tailwind CSS</span><span class="text-[var(--text-muted)]">樣式框架</span></div>
+        <div class="flex p-4 text-sm bg-[var(--surface-2)]"><span class="w-48 font-bold text-[var(--text)]">pytest</span><span class="text-[var(--text-muted)]">後端測試</span></div>
+        <div class="flex p-4 text-sm"><span class="w-48 font-bold text-[var(--text)]">Vitest</span><span class="text-[var(--text-muted)]">前端測試</span></div>
+        <div class="flex p-4 text-sm bg-[var(--surface-2)]"><span class="w-48 font-bold text-[var(--text)]">Fly.io</span><span class="text-[var(--text-muted)]">部署</span></div>
+      </div>
+
+      <p class="text-sm font-semibold text-[var(--text-muted)] pt-4 border-t border-[var(--panel-border-dim)]">作者：<a href="#" class="hover:underline transition" style="color:var(--link)">GitHub</a></p>
+    </main>
+
+  </div>
+</div>
+
+<script>
+function showScreen(name) {
+  document.getElementById('screen-search').classList.toggle('hidden', name !== 'search');
+  document.getElementById('screen-about').classList.toggle('hidden', name !== 'about');
+  ['rail-search','rail-about','rail-search-m','rail-about-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const isActive = id.includes('search') ? name === 'search' : name === 'about';
+    el.classList.toggle('active', isActive);
+  });
+}
+function showResultState(name) {
+  ['results', 'loading', 'empty', 'error'].forEach(s => {
+    document.getElementById('state-' + s).classList.toggle('hidden', s !== name);
+  });
+}
+function setChip(el) {
+  document.querySelectorAll('.chip').forEach(c => {
+    c.className = 'chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium';
+  });
+  el.className = 'chip btn-primary active flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium';
+}
+function toggleLang() {
+  alert('POC 展示用：正式版由 locales/zh.json 與 en.json 驅動切換');
+}
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  document.querySelectorAll('#theme-btn use, [onclick="toggleTheme()"] use').forEach(u => {
+    u.setAttribute('href', next === 'dark' ? '#i-moon' : '#i-sun');
+  });
+}
+</script>
+
+</body>
+</html>

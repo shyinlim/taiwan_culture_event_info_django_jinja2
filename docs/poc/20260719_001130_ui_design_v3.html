@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Culture Event Finder — POC v3 (Glass)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root, [data-theme="dark"] {
+    --scene-1: #2b2440; --scene-2: #3a2a3f; --scene-3: #1a2233;
+    --panel: rgba(30, 27, 46, .55);
+    --panel-border: rgba(255,255,255,.10);
+    --surface-2: rgba(255,255,255,.06);
+    --text: #f4f2ff;
+    --text-muted: #b9b3d1;
+    --text-faint: #756f92;
+    --accent-warm: #f2994a;
+    --accent-cool: #7c6bf2;
+  }
+  [data-theme="light"] {
+    --scene-1: #ffe9d6; --scene-2: #ffd8ea; --scene-3: #dbe6ff;
+    --panel: rgba(255,255,255,.55);
+    --panel-border: rgba(20,10,40,.10);
+    --surface-2: rgba(20,10,40,.05);
+    --text: #201a33;
+    --text-muted: #5c5478;
+    --text-faint: #9691ac;
+    --accent-warm: #f2994a;
+    --accent-cool: #6c56f2;
+  }
+  body {
+    font-family: -apple-system, "Noto Sans TC", sans-serif;
+    background:
+      radial-gradient(circle at 15% 20%, var(--scene-1), transparent 55%),
+      radial-gradient(circle at 85% 15%, var(--scene-2), transparent 50%),
+      radial-gradient(circle at 50% 90%, var(--scene-3), transparent 60%),
+      var(--scene-3);
+    background-attachment: fixed;
+  }
+  .glass {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .rail-btn.active { background: linear-gradient(135deg, var(--accent-cool), var(--accent-warm)); color: #fff; }
+  .card-hover:hover { transform: translateY(-3px); box-shadow: 0 16px 40px -12px rgba(124,107,242,.45); }
+</style>
+</head>
+<body class="text-[var(--text)] min-h-screen transition-colors">
+
+<div class="max-w-7xl mx-auto px-4 py-6 flex gap-4">
+
+  <!-- Icon rail -->
+  <aside class="glass hidden sm:flex flex-col items-center gap-2 rounded-full px-2 py-4 h-fit sticky top-6">
+    <button onclick="showScreen('search')" id="rail-search" class="rail-btn active h-10 w-10 rounded-full flex items-center justify-center text-lg transition">🔍</button>
+    <button onclick="showScreen('about')" id="rail-about" class="rail-btn h-10 w-10 rounded-full flex items-center justify-center text-lg transition hover:bg-[var(--surface-2)]">ℹ️</button>
+    <div class="w-6 h-px bg-[var(--panel-border)] my-1"></div>
+    <button onclick="toggleTheme()" id="theme-btn" class="h-10 w-10 rounded-full flex items-center justify-center text-lg hover:bg-[var(--surface-2)]">🌙</button>
+    <button onclick="toggleLang()" class="h-10 w-10 rounded-full flex items-center justify-center text-xs font-semibold hover:bg-[var(--surface-2)]">EN</button>
+  </aside>
+
+  <div class="flex-1 min-w-0">
+
+    <!-- Mobile top bar -->
+    <div class="glass sm:hidden flex items-center justify-between rounded-2xl px-4 py-3 mb-4">
+      <h1 class="font-bold flex items-center gap-2">🎭 Culture Event Finder</h1>
+      <div class="flex gap-2">
+        <button onclick="showScreen('search')" id="rail-search-m" class="rail-btn active h-8 w-8 rounded-full text-sm">🔍</button>
+        <button onclick="showScreen('about')" id="rail-about-m" class="rail-btn h-8 w-8 rounded-full text-sm">ℹ️</button>
+        <button onclick="toggleTheme()" class="h-8 w-8 rounded-full text-sm">🌙</button>
+      </div>
+    </div>
+
+    <!-- ===== SEARCH SCREEN ===== -->
+    <main id="screen-search" class="glass rounded-3xl p-5 sm:p-6">
+
+      <h1 class="hidden sm:flex font-bold text-xl items-center gap-2 mb-5">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent-cool)] to-[var(--accent-warm)]">🎭</span>
+        Culture Event Finder
+      </h1>
+
+      <!-- Country strip -->
+      <div class="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
+        <button class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium text-white" style="background:linear-gradient(135deg, var(--accent-cool), var(--accent-warm))">
+          🇹🇼 台灣
+        </button>
+        <button disabled class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm text-[var(--text-faint)] border border-[var(--panel-border)] cursor-not-allowed">
+          🇯🇵 日本 <span class="text-[10px]">即將推出</span>
+        </button>
+        <button disabled class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm text-[var(--text-faint)] border border-[var(--panel-border)] cursor-not-allowed">
+          🇰🇷 韓國 <span class="text-[10px]">即將推出</span>
+        </button>
+      </div>
+
+      <!-- Search bar -->
+      <form class="rounded-2xl bg-[var(--surface-2)] border border-[var(--panel-border)] p-4 mb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <select class="bg-transparent border border-[var(--panel-border)] rounded-xl px-3 py-2 text-sm col-span-2 sm:col-span-1 focus:outline-none focus:ring-2 focus:ring-[var(--accent-cool)]">
+          <option class="text-black">地區：全部</option>
+          <option class="text-black">臺北</option>
+          <option class="text-black">臺中</option>
+          <option class="text-black">高雄</option>
+        </select>
+        <select class="bg-transparent border border-[var(--panel-border)] rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-cool)]">
+          <option class="text-black">類別：全部</option>
+          <option class="text-black">展覽</option>
+          <option class="text-black">表演</option>
+          <option class="text-black">音樂</option>
+        </select>
+        <select class="bg-transparent border border-[var(--panel-border)] rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-cool)]">
+          <option class="text-black">2026</option>
+          <option class="text-black">2025</option>
+        </select>
+        <select class="bg-transparent border border-[var(--panel-border)] rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-cool)]">
+          <option class="text-black">07 月</option>
+          <option class="text-black">08 月</option>
+        </select>
+        <button type="button" onclick="showResultState('results')"
+          class="col-span-2 sm:col-span-1 lg:col-span-2 text-white rounded-xl px-3 py-2 text-sm font-semibold hover:brightness-110 transition"
+          style="background:linear-gradient(135deg, var(--accent-cool), var(--accent-warm))">
+          搜尋
+        </button>
+      </form>
+
+      <!-- Category chips -->
+      <div class="flex flex-wrap gap-2 mb-6">
+        <button onclick="setChip(this)" class="chip active px-3 py-1 rounded-full text-xs font-medium text-white" style="background:linear-gradient(135deg, var(--accent-cool), var(--accent-warm))">全部</button>
+        <button onclick="setChip(this)" class="chip px-3 py-1 rounded-full text-xs font-medium bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--panel-border)] hover:bg-white/10">展覽</button>
+        <button onclick="setChip(this)" class="chip px-3 py-1 rounded-full text-xs font-medium bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--panel-border)] hover:bg-white/10">表演</button>
+        <button onclick="setChip(this)" class="chip px-3 py-1 rounded-full text-xs font-medium bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--panel-border)] hover:bg-white/10">音樂</button>
+        <button onclick="setChip(this)" class="chip px-3 py-1 rounded-full text-xs font-medium bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--panel-border)] hover:bg-white/10">市集</button>
+      </div>
+
+      <!-- state switcher (POC only, not shipped) -->
+      <div class="flex flex-wrap gap-2 mb-4 text-xs">
+        <span class="text-[var(--text-faint)]">[POC 開發用] 切換結果狀態：</span>
+        <button onclick="showResultState('results')" class="underline" style="color:var(--accent-cool)">有結果</button>
+        <button onclick="showResultState('loading')" class="underline" style="color:var(--accent-cool)">Loading</button>
+        <button onclick="showResultState('empty')" class="underline" style="color:var(--accent-cool)">空結果</button>
+        <button onclick="showResultState('error')" class="underline" style="color:var(--accent-cool)">錯誤</button>
+      </div>
+
+      <!-- Results grid -->
+      <div id="state-results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="card-hover rounded-2xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border)] transition">
+          <div class="h-28 relative flex items-end p-3" style="background:linear-gradient(135deg,#f2994a,#eb5757)">
+            <span class="absolute top-3 left-3 text-[11px] font-semibold bg-black/30 text-white px-2 py-0.5 rounded-full">熱賣中</span>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold leading-snug mb-2">臺北當代藝術館：光影展</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-1">🗓️ 2026/07/20 10:00–18:00</p>
+            <a href="#" class="text-sm hover:underline block mb-3" style="color:var(--accent-cool)">📍 臺北市大同區長安西路 39 號</a>
+            <p class="text-sm font-semibold">NT$ 300</p>
+          </div>
+        </div>
+        <div class="card-hover rounded-2xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border)] transition">
+          <div class="h-28 relative flex items-end p-3" style="background:linear-gradient(135deg,#7c6bf2,#4834d4)">
+            <span class="absolute top-3 left-3 text-[11px] font-semibold bg-black/30 text-white px-2 py-0.5 rounded-full">已售完</span>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold leading-snug mb-2">國家音樂廳：夏夜交響</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-1">🗓️ 2026/07/22 19:30–21:30</p>
+            <a href="#" class="text-sm hover:underline block mb-3" style="color:var(--accent-cool)">📍 臺北市中正區中山南路 21-1 號</a>
+            <p class="text-sm font-semibold">NT$ 800</p>
+          </div>
+        </div>
+        <div class="card-hover rounded-2xl overflow-hidden bg-[var(--surface-2)] border border-[var(--panel-border)] transition">
+          <div class="h-28 relative flex items-end p-3" style="background:linear-gradient(135deg,#2d9d78,#0f5132)">
+            <span class="absolute top-3 left-3 text-[11px] font-semibold bg-black/30 text-white px-2 py-0.5 rounded-full">免費</span>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold leading-snug mb-2">松山文創園區：手作市集</h3>
+            <p class="text-sm text-[var(--text-muted)] mb-1">🗓️ 2026/07/25 全日</p>
+            <a href="#" class="text-sm hover:underline block mb-3" style="color:var(--accent-cool)">📍 臺北市信義區光復南路 133 號</a>
+            <p class="text-sm font-semibold">免費入場</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skeleton loading -->
+      <div id="state-loading" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="rounded-2xl bg-[var(--surface-2)] border border-[var(--panel-border)] p-4 animate-pulse space-y-3">
+          <div class="h-28 bg-white/10 rounded-xl -m-4 mb-3"></div>
+          <div class="h-4 bg-white/10 rounded w-3/4"></div>
+          <div class="h-3 bg-white/10 rounded w-1/2"></div>
+          <div class="h-3 bg-white/10 rounded w-1/3"></div>
+        </div>
+        <div class="rounded-2xl bg-[var(--surface-2)] border border-[var(--panel-border)] p-4 animate-pulse space-y-3">
+          <div class="h-28 bg-white/10 rounded-xl -m-4 mb-3"></div>
+          <div class="h-4 bg-white/10 rounded w-3/4"></div>
+          <div class="h-3 bg-white/10 rounded w-1/2"></div>
+          <div class="h-3 bg-white/10 rounded w-1/3"></div>
+        </div>
+        <div class="rounded-2xl bg-[var(--surface-2)] border border-[var(--panel-border)] p-4 animate-pulse space-y-3">
+          <div class="h-28 bg-white/10 rounded-xl -m-4 mb-3"></div>
+          <div class="h-4 bg-white/10 rounded w-3/4"></div>
+          <div class="h-3 bg-white/10 rounded w-1/2"></div>
+          <div class="h-3 bg-white/10 rounded w-1/3"></div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="state-empty" class="hidden text-center py-20">
+        <p class="text-4xl mb-3">🔍</p>
+        <p class="text-[var(--text)] font-medium mb-1">找不到符合條件的活動</p>
+        <p class="text-[var(--text-muted)] text-sm">試試看更換地區、類別或月份</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="state-error" class="hidden text-center py-20">
+        <p class="text-4xl mb-3">⚠️</p>
+        <p class="text-[var(--text)] font-medium mb-1">資料讀取失敗</p>
+        <p class="text-[var(--text-muted)] text-sm mb-4">上游 API 暫時無法回應，請稍後再試</p>
+        <button class="rounded-xl px-4 py-2 text-sm border border-[var(--panel-border)] hover:bg-white/10">重新整理</button>
+      </div>
+
+    </main>
+
+    <!-- ===== ABOUT SCREEN ===== -->
+    <main id="screen-about" class="hidden glass rounded-3xl p-6">
+      <h2 class="text-xl font-bold mb-4">關於 Culture Event Finder</h2>
+      <p class="text-sm text-[var(--text-muted)] mb-6">
+        整合台灣文化部公開資料的活動搜尋工具。以 country provider 架構設計，
+        未來可擴充其他國家的公開資料源（見搜尋頁上方國家列）。
+      </p>
+
+      <h3 class="font-semibold mb-2">Tech Stack</h3>
+      <div class="rounded-2xl overflow-hidden mb-6 border border-[var(--panel-border)] divide-y divide-[var(--panel-border)]">
+        <div class="flex p-3 text-sm"><span class="w-40 font-medium">Django 5.2 LTS</span><span class="text-[var(--text-muted)]">後端框架</span></div>
+        <div class="flex p-3 text-sm bg-[var(--surface-2)]"><span class="w-40 font-medium">uv</span><span class="text-[var(--text-muted)]">依賴管理</span></div>
+        <div class="flex p-3 text-sm"><span class="w-40 font-medium">toolkitsy</span><span class="text-[var(--text-muted)]">Logging</span></div>
+        <div class="flex p-3 text-sm bg-[var(--surface-2)]"><span class="w-40 font-medium">React + TypeScript</span><span class="text-[var(--text-muted)]">前端框架</span></div>
+        <div class="flex p-3 text-sm"><span class="w-40 font-medium">Vite</span><span class="text-[var(--text-muted)]">前端 build tool</span></div>
+        <div class="flex p-3 text-sm bg-[var(--surface-2)]"><span class="w-40 font-medium">Tailwind CSS</span><span class="text-[var(--text-muted)]">樣式框架</span></div>
+        <div class="flex p-3 text-sm"><span class="w-40 font-medium">pytest</span><span class="text-[var(--text-muted)]">後端測試</span></div>
+        <div class="flex p-3 text-sm bg-[var(--surface-2)]"><span class="w-40 font-medium">Vitest</span><span class="text-[var(--text-muted)]">前端測試</span></div>
+        <div class="flex p-3 text-sm"><span class="w-40 font-medium">Fly.io</span><span class="text-[var(--text-muted)]">部署</span></div>
+      </div>
+
+      <p class="text-sm text-[var(--text-muted)]">作者：<a href="#" class="hover:underline" style="color:var(--accent-cool)">GitHub</a></p>
+    </main>
+
+  </div>
+</div>
+
+<script>
+function showScreen(name) {
+  document.getElementById('screen-search').classList.toggle('hidden', name !== 'search');
+  document.getElementById('screen-about').classList.toggle('hidden', name !== 'about');
+  ['rail-search','rail-about','rail-search-m','rail-about-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const isActive = id.includes('search') ? name === 'search' : name === 'about';
+    el.classList.toggle('active', isActive);
+  });
+}
+function showResultState(name) {
+  ['results', 'loading', 'empty', 'error'].forEach(s => {
+    document.getElementById('state-' + s).classList.toggle('hidden', s !== name);
+  });
+}
+function setChip(el) {
+  document.querySelectorAll('.chip').forEach(c => {
+    c.className = 'chip px-3 py-1 rounded-full text-xs font-medium bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--panel-border)] hover:bg-white/10';
+  });
+  el.className = 'chip active px-3 py-1 rounded-full text-xs font-medium text-white';
+  el.style.background = 'linear-gradient(135deg, var(--accent-cool), var(--accent-warm))';
+}
+function toggleLang() {
+  alert('POC 展示用：正式版由 locales/zh.json 與 en.json 驅動切換');
+}
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  document.getElementById('theme-btn').textContent = next === 'dark' ? '🌙' : '☀️';
+}
+</script>
+
+</body>
+</html>
