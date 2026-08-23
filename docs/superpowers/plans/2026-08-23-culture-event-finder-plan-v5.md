@@ -1,13 +1,16 @@
-# [SUPERSEDED by v5] Culture Event Finder Refactor：Implementation Plan v4
+# Culture Event Finder Refactor：Implementation Plan v5
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/superpowers/specs/2026-08-22-culture-event-finder-design-v4.md`
+**Spec:** `docs/superpowers/specs/2026-08-23-culture-event-finder-design-v5.md`
 
 > ⚠️ **本文件自足。執行時不需開啟舊 plan。**
-> `2026-07-19-culture-event-finder-plan-v3.md`、`2026-07-18-...-plan-v2.md`、
-> `2026-07-11-culture-event-finder-refactor.md` 全部 SUPERSEDED，且都包含在本 plan
-> 順序下會造成損害的指令。**不要開它們。**
+> `2026-08-22-culture-event-finder-plan-v4.md`、`2026-07-19-...-plan-v3.md`、
+> `2026-07-18-...-plan-v2.md`、`2026-07-11-culture-event-finder-refactor.md`
+> 全部 SUPERSEDED，且都包含在本 plan 順序下會造成損害的指令。**不要開它們。**
+
+> **task 編號與 v4 不同。** 前端 scaffold 從 T4 提前成 T5，原本的 T5/T6/T7 各往後移一號；
+> 原本的 T10 拆成 T10a/T10b/T10c。T8 之後的編號不變。對照表在文末附錄。
 
 **Goal:** 把 Taiwan culture-event 的 Django/Jinja2 網站重構成 React (Vite + TS + Tailwind) SPA + Django JSON API，以單一 container 部署到 Fly.io，具備 per-country provider 架構（先只做台灣）、cache-aside 與 zh/en UI i18n。
 
@@ -15,7 +18,9 @@
 
 **Tech Stack:** Django 5.2 LTS、uv (依賴管理)、toolkitsy (logging)、requests、pytest + pytest-django + responses；Vite + React + TypeScript + Tailwind v4 + Vitest；Docker multi-stage；Fly.io + GitHub Actions (flyctl)。
 
-**任務順序的設計理由：** Phase 1 先把最終目錄結構、settings、dev 環境立好，後面每個 task 都直接在最終路徑上寫 code。不這樣做的話 settings 要改三次、compose 要寫三次、dev Dockerfile 要寫三次，而且中間態產出的東西全部會被下一步刪掉。
+**任務順序的設計理由：** Phase 1 先把最終目錄結構、settings、dev 環境、**以及前端 scaffold** 立好，後面每個 task 都直接在最終路徑上寫 code。不這樣做的話 settings 要改三次、compose 要寫三次、dev Dockerfile 要寫三次，而且中間態產出的東西全部會被下一步刪掉。
+
+**前端 scaffold 為什麼排在後端之前（v5 的改動）：** makefile 的 `test` target 會 `cd frontend`。scaffold 排在後端三個 task 之後的話，那三個 task 期間 `make test` 會在那一行直接 abort，而 `make test` 是 owner 唯一背下來的指令。順序改過來之後 makefile 與 compose 各只寫一次、`make test` 從 T6 到收工全程可用。代價是 T5 結束時前端只有 Vite 的預設頁面，還沒有任何自己的東西。
 
 ## Global Constraints
 
@@ -27,7 +32,7 @@
 - **dev container 用 `uv sync --frozen`（不加 `--no-dev`，要保留 pytest 等 dev deps）；prod Dockerfile 才加 `--no-dev`。**
 - **backend container 的 venv 必須放在 bind mount 之外**：`ENV UV_PROJECT_ENVIRONMENT=/opt/venv`。venv 若落在 `/web/.venv`，host 的 macOS arm64 版本會覆蓋 container 的 linux 版本。
 - **`fly.toml` 不得刪除。** Phase 5 仍要用它部署，Phase 6 遷移 Cloud Run 完成後才刪。
-- **build 期必須注入 `SECRET_KEY`。** `collectstatic`、`make test`、CI 的 `test-backend` 三處都會觸發 settings 的 fail-fast 守衛。用 `RUN SECRET_KEY=build-only-not-used python ...` 這種行內注入，**不可以用 `ENV SECRET_KEY=`**（假值會留在 image 裡變成 runtime 預設），**不可以用 `DEBUG=True` 繞過**（會把 debug 帶進 prod image）。
+- **build 期必須同時注入 `SECRET_KEY` 與 `ALLOWED_HOSTS`。** `collectstatic`、`make test`、CI 的 `test-backend` 三處都會觸發 settings 的 fail-fast 守衛，而**兩個變數都是 fail-fast，只注入 `SECRET_KEY` 是跑不起來的**（v4 的本行與 spec §6.1 都漏了 `ALLOWED_HOSTS`）。用 `RUN SECRET_KEY=build-only-not-used ALLOWED_HOSTS=build-only python ...` 這種行內注入，**不可以用 `ENV SECRET_KEY=`**（假值會留在 image 裡變成 runtime 預設），**不可以用 `DEBUG=True` 繞過**（會把 debug 帶進 prod image）。
 - **Fly.io 不會注入 `$PORT`**（Cloud Run 才會）。Dockerfile 的 `ENV PORT` 必須與 `fly.toml` 的 `[http_service].internal_port` 對齊，否則 proxy 打不到，且因 `min_machines_running = 0`（scale-to-zero）不會立刻被發現。
 - **`fly.toml` 必須定義 `[[http_service.checks]]`，而且要帶 `Host` header。** `[http_service]` 不會自動生出 HTTP health check；沒有它的話 port 對不齊時 `fly deploy` 仍回報成功。少了 `Host` header 則 check 會被 `ALLOWED_HOSTS` 擋成 400。
 - **`SECRET_KEY` 與 `ALLOWED_HOSTS` 都要真的 fail-fast**，非 dev 且未注入就 `ImproperlyConfigured`，兩者都不留 fallback。
@@ -36,19 +41,26 @@
 - **cache TTL：12 小時（`43200` 秒）。** Cache key 格式：`events:{country}:{category}`。
 - **月份過濾用區間重疊判斷，不是比對開始月份。** 實測 MoC `category=6` 的 439 筆 showInfo 有 386 筆跨月（88%），只比 `start_time` 會讓展覽整個類別查不到。測試必須涵蓋一個 1 月開跑、12 月結束的活動查 9 月要命中。
 - **地名比對前做 `臺` / `台` 正規化。** 實測有 11 筆寫 `台北市`，字面 substring 會靜默丟掉。
-- **台灣的 locations 是 22 個縣市**（實測 `宜蘭縣` 有 9 筆但舊清單裡沒有）。
-- **參數一律對照 provider 白名單驗證**，`isdigit()` 不夠。
+- **台灣的 locations 是 20 個前綴、涵蓋 22 個縣市**（實測 `宜蘭縣` 有 9 筆但舊清單裡沒有）。新竹市與新竹縣共用 `新竹` 前綴，嘉義市與嘉義縣共用 `嘉義`，所以清單長度是 20。**斷言寫 20，測試名稱寫 `test_location_prefixes_cover_22_counties`。** 把 22 當成清單長度會讓人補上新竹市與嘉義市，弄壞三處斷言加一個 checkpoint。
+- **參數一律對照 provider 白名單驗證**，`isdigit()` 不夠。而且 `isdigit()` 對上標數字回 `True`（`'²'.isdigit()` 是 `True` 但 `int('²')` 拋 `ValueError`），所以判定要寫 `category.isascii() and category.isdigit()`；月份 regex 要收斂成 `(19|20)\d{2}-(0[1-9]|1[0-2])`，否則 `0000-01` 會通過驗證再死在 `strptime`。兩者的症狀都是 500 HTML 而不是合約承諾的 400 JSON。
+- **`location` 的白名單比對要先做 `臺`/`台` 正規化再查集合**，與過濾階段用同一個函式。不然 `location=台北` 這個書籤會拿到 400，而它的過濾邏輯本來會命中。
+- **上游回應要先確認是 `list`。** `response.json()` 只保證是合法 JSON。`payload = response.json()` 的下一行就 `if not isinstance(payload, list): raise UpstreamError(...)`，解析迴圈另外 `except (AttributeError, TypeError)` 轉 `UpstreamError`。不補的話政府 API 包一層 `{"data": [...]}` 就是 500 而不是 502，而且格式漂移的訊號完全沒亮。
+- **`pytest.ini` 必須有 `python_files = test_*.py tests.py`。** pytest 預設只收 `test_*.py` 與 `*_test.py`，Django 慣例的 `health/tests.py` 會被靜默略過。實測 `pytest .` 對只有 `health/tests.py` 的目錄收到 0 個測試並以 exit code 5 結束，而 `pytest .` 正是 makefile、CI、與每一個 checkpoint 用的指令。
+- **`make test` 拆成 `test-backend` 與 `test-frontend`。** `test` 呼叫兩者。前端那半在 T5 之後才接上去。
 - **前端時間一律用本地時區，不可用 `toISOString()`。**
+- **每個查詢回應都要帶 `meta: {rawCount, matchedCount, cacheAge}`。** 這是本專案唯一的事後診斷手段（`fly logs` 無保留期 + scale-to-zero）。前端不顯示，但 owner 一個 curl 就分得出是上游沒資料、還是自己的過濾壞了。
 - **branch 策略：Phase 0–5 全程在 feature branch 進行，只有部署驗證通過後才 merge master。** master 上現有的 `deploy.yml` 硬編 `culture/tests.py`、`tech_stack/tests.py`，T2 刪掉這些 app 後若誤 merge，CI 會全紅且 `flyctl deploy` 永遠跑不到，prod 卡死且無告警。
 - **`main_project/main_project/settings.py` 被本地 hook `protect_sensitive.py` 擋住 Read。** 只有 T2 會碰到它，而 T2 是整份取代，用 Bash 寫檔即可，不需要先讀。T2 之後此摩擦永久解除。
 - **前端視覺 source of truth 是 `docs/poc/20260719_155200_ui_design_v27.html`**（POC gate 已於 2026-07-19 通過）。CSS 與 Tailwind class 組合皆抄自該檔，不得自行發明視覺方向；該檔唯讀，不可修改。禁用粉紅/magenta。badge 的裝飾性 emoji（「🔥 熱賣中」）owner 已於 2026-08-22 確認保留。
-- **後端測試從 repo root 跑**：`cd backend && uv run python -m pytest . -v`。
+- **後端測試從 repo root 跑**：`cd backend && DEBUG=True uv run python -m pytest . -v`。
+- **dev container 的 `CMD` 用 `uv run --frozen --no-sync`。** 裸的 `uv run` 每次啟動都重新 resolve 並 sync，而專案目錄是 bind mount 的 host repo，lock 稍微 drift 就會被 container 內的 process 改寫回你的工作目錄；Linux host 上因權限不符會直接起不來。
+- **dev compose 的 backend service 要加 `user: "${UID:-1000}:${GID:-1000}"`。** build 時的 `chown` 會被 runtime 的 bind mount 蓋掉，Linux host 上 `appuser` 連 `__pycache__` 都寫不了。macOS 的 Docker Desktop 會假裝 ownership 所以本機測不出來，而 compose 存在的理由正是「誰進來環境都一致」。
 - 不引入 react-router、不引入 Redux、不引入重型 i18n 套件、不引入 icon library、不引入 DRF。
 - **toolkitsy 尚無 http 模組**（PyPI 0.1.0 已驗證）。外部 HTTP 用 `requests` 並隔離在 `taiwan.py`，未來單檔替換。
 
 ## Phase 0：規劃（先於所有 task）
 
-- [x] **spec v4 + plan v4 定稿**（本文件即是）
+- [x] **spec v5 + plan v5 定稿**（本文件即是）
 - [x] **POC HTML gate 通過**：owner 於 2026-07-19 定案 `docs/poc/20260719_155200_ui_design_v27.html`
 - [x] **emoji badge 確認**：owner 於 2026-08-22 確認「🔥 熱賣中」保留
 - [ ] **owner 查 fly.io dashboard 的 billing**（blocking：**owner 未明確回覆查核結果前，不得開始 T1**）
@@ -84,6 +96,10 @@ requires-python = ">=3.13"
 dependencies = [
     "django>=5.2,<5.3",
     "requests>=2.32",
+    # taiwan.py 直接 import urllib3（關掉 InsecureRequestWarning）。
+    # 它目前是 requests 的傳遞依賴，但直接 import 的東西就要直接宣告，
+    # 不然哪天 requests 換掉 vendored urllib3，錯誤會出現在一個看不出關聯的地方。
+    "urllib3>=2.0",
     "toolkitsy>=0.1.0",
     "gunicorn>=23.0",
     "whitenoise>=6.7",
@@ -144,7 +160,7 @@ git commit -m "chore: migrate dependency management from poetry to uv, add toolk
 
 ---
 
-### Task 2: 清理舊 app + 重構成 `backend/` + `config/` + 全新 settings
+### Task 2: 清理舊 app + 重構成 `backend/` + `config/` + 全新 settings ★ checkpoint
 
 > ⚠️ **這個 task 不可中斷。** `git mv` 之後、settings / wsgi / pytest.ini 改完之前，
 > 所有 Python 進入點都指向不存在的 module，repo 處於起不來的狀態。
@@ -186,7 +202,11 @@ git rm -r main_project/culture main_project/tech_stack main_project/utility \
   main_project/main_project/templates main.py deployment_tcei
 git rm main_project/main_project/views.py
 git rm main_project/health_check/templates/health_check.html
-xargs git rm -f < /tmp/to-delete.txt
+# --ignore-unmatch 不可省。Step 2 的清單是從整個 main_project 掃出來的，
+# 裡面含 main_project/culture/static/*，而上面第一行已經把 culture/ 整個刪掉了。
+# 少了這個旗標，git rm -f 對已不存在的 pathspec 會 exit non-zero，
+# 整個 xargs 跟著倒掉，repo 就停在半遷移狀態 —— 而這是一個標了「不可中斷」的 task。
+xargs git rm -f --ignore-unmatch < /tmp/to-delete.txt
 ls fly.toml   # 確認還在：這是刻意保留，Phase 5 還要用它部署
 ```
 
@@ -263,9 +283,12 @@ MIDDLEWARE = [
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 
+# DIRS 是空的：SPA 的 index.html 由 config/urls.py 的 spa() 直接讀 bytes 回傳，
+# 不走 template engine（T12 有說明為什麼）。這裡留一份最小設定只是為了讓
+# Django 的 system check 不抱怨。
 TEMPLATES = [{
     "BACKEND": "django.template.backends.django.DjangoTemplates",
-    "DIRS": [FRONTEND_DIST] if FRONTEND_DIST.exists() else [],
+    "DIRS": [],
     "APP_DIRS": False,
     "OPTIONS": {"context_processors": []},
 }]
@@ -278,6 +301,17 @@ STATIC_ROOT = REPO_ROOT / "staticfiles"
 STATICFILES_DIRS = [FRONTEND_DIST] if FRONTEND_DIST.exists() else []
 # WhiteNoise 刻意用 plain storage（預設值，不設 STATICFILES_STORAGE）：
 # Vite 已經對檔名做 content-hash，manifest storage 會重複 hash 且可能 500（spec §6.1）
+#
+# 但 plain storage 要自己教 WhiteNoise 認得 Vite 的檔名。它預設認的是
+# name.<12 位 hex>.ext，Vite 產的是 index-DcJk2sLm.js（破折號 + base64url），
+# 一個都不符合，結果是每個已經 hash 過的資產都拿到 max-age=60 而不是 immutable，
+# 回訪的使用者每分鐘重下載整包 JS。這個問題只在 prod 出現、而且永遠不會報錯，
+# 本機與 CI 都看不到（spec §6.1）。
+def _vite_hashed(path, url):
+    return url.startswith(STATIC_URL) and "-" in url.rsplit("/", 1)[-1]
+
+
+WHITENOISE_IMMUTABLE_FILE_TEST = _vite_hashed
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Taipei"
@@ -295,7 +329,7 @@ from toolkitsy.logger import configure as _configure_logging  # noqa: E402
 _configure_logging()  # console only；Fly 直接收 stdout
 ```
 
-`events` app 與 `CorrelationIdMiddleware` 現在還不存在，T6 會把它們加進來。
+`events` app 與 `CorrelationIdMiddleware` 現在還不存在，T7 會把它們加進來。
 
 - [ ] **Step 7: 全新路由與 `health` app**
 
@@ -328,7 +362,8 @@ from django.http import JsonResponse
 def health(request):
     """Liveness only：deliberately touches no external dependency.
 
-    上游（MoC）掛掉時這裡照樣回 200。監控要指向 /health/upstream，不是這支（spec §3.4）。
+    上游（MoC）掛掉時這裡照樣回 200，所以它只夠給 Fly 的 health check 用。
+    真正的上游監控是 uptime 服務去打一個真實的搜尋 URL（spec §3.4、T16 Step 8）。
     """
     return JsonResponse({"status": "ok"})
 ```
@@ -392,9 +427,22 @@ if __name__ == '__main__':
 [pytest]
 DJANGO_SETTINGS_MODULE = config.settings
 addopts = --nomigrations
+python_files = test_*.py tests.py
 ```
 
 `--nomigrations` 不可省：專案沒有任何 model，每次跑測試對 in-memory sqlite 跑一輪 contenttypes migration 是純浪費。
+
+**`python_files` 這一行也不可省。** pytest 預設只收 `test_*.py` 與 `*_test.py`，
+而下一步要寫的 `backend/health/tests.py` 走的是 Django 慣例的檔名，兩者都不符，
+會被**靜默略過**。實測結果：
+
+```
+pytest.ini 沒有 python_files + 只有 health/tests.py  →  collected 0 items，exit code 5
+```
+
+exit code 5 會讓下一步驗收的 `&&` 串接直接斷掉，而錯誤訊息看起來像測試環境壞了，
+不像檔名不符。往後每一次 `pytest .`（makefile、CI、每個 checkpoint 用的都是它）
+也都會少跑 health 那一組而不吭聲。
 
 - [ ] **Step 9: `.gitignore` 加 `staticfiles/`**
 
@@ -432,7 +480,7 @@ cd backend && uv run python -c "import config.settings" 2>&1 | tail -1
 
 Expected: 含 `ImproperlyConfigured` 與 `SECRET_KEY must be set` 的錯誤訊息。若這裡沒有爆炸，代表守衛沒生效，回 Step 6 檢查。
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add -A
@@ -451,9 +499,9 @@ git commit -m "refactor: remove legacy jinja2 apps, restructure into backend/con
 
 **Interfaces:**
 - Consumes: T2 產出的 `backend/` 結構
-- Produces: `make dev` 起 backend（:8000）；`make test`、`make dev-reset`、`make install-host`、`make run-prod` 四個 target。T7 會把 frontend service 加進同一個 compose 檔。
+- Produces: `make dev` 起 backend（:8000）；`make test`、`make dev-reset`、`make install-host`、`make run-prod` 四個 target。T4 會把 frontend service 加進同一個 compose 檔。
 
-**frontend service 刻意還不加。** `frontend/` 目錄要到 T7 才存在，先寫進 compose 會讓 `make dev` 直接 build 失敗。T7 的最後一步負責補上並驗證 HMR。
+**frontend service 刻意還不加。** `frontend/` 目錄要到 T4 才存在，先寫進 compose 會讓 `make dev` 直接 build 失敗。T4 的最後一步負責補上並驗證 HMR。
 
 - [ ] **Step 1: 建立 `backend/Dockerfile.dev`**
 
@@ -481,7 +529,11 @@ RUN chown -R appuser:appuser /web /opt/venv
 USER appuser
 
 EXPOSE 8000
-CMD ["uv", "run", "python", "backend/manage.py", "runserver", "0.0.0.0:8000"]
+# --frozen --no-sync 兩個旗標都不可省。裸的 uv run 每次啟動都會重新 resolve 並 sync，
+# 而 /web 是 bind mount 的 host repo：lock 只要稍微 drift，container 內的 process
+# 就會把 uv.lock 改寫回你的工作目錄。Linux host 上因為檔案屬於 host UID，
+# 這一步會直接 PermissionError 起不來；macOS 上則是靜默改掉你的 lock。
+CMD ["uv", "run", "--frozen", "--no-sync", "python", "backend/manage.py", "runserver", "0.0.0.0:8000"]
 ```
 
 `COPY . .` 只在 build 當下複製一次；跑起來後由 compose 的 bind mount 蓋過，達成即時改即時生效。build context 是 repo root，所以 `COPY pyproject.toml uv.lock ./` 不受 Dockerfile 自己放在 `backend/` 底下影響（Docker `COPY` 一律相對 build context）。
@@ -496,6 +548,11 @@ services:
       dockerfile: backend/Dockerfile.dev
     environment:
       - DEBUG=True
+    # build 時的 chown 會被 runtime 的 bind mount 整個蓋掉，檔案樹仍屬於 host 的 UID。
+    # 不設這一行的話，Linux host 上 container 內的 appuser 連 __pycache__ 都寫不了。
+    # macOS 的 Docker Desktop 會假裝 ownership，所以這個問題在 mac 上測不出來，
+    # 而 compose 存在的理由正是「誰進來開發環境都一致」。
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - '8000:8000'
     volumes:
@@ -503,7 +560,9 @@ services:
     working_dir: /web
 ```
 
-沒有顯式的 `networks:`：Compose 會自動建一個 default bridge，service 之間仍可用 service name 做 DNS 解析，所以 T7 的 `vite.config.ts` 寫 `http://backend:8000` 照樣運作。少一個要維護的具名資源。
+沒有顯式的 `networks:`：Compose 會自動建一個 default bridge，service 之間仍可用 service name 做 DNS 解析，所以 T4 的 `vite.config.ts` 寫 `http://backend:8000` 照樣運作。少一個要維護的具名資源。
+
+`UID` / `GID` 在 macOS 與多數 Linux shell 下不是預設匯出的環境變數，所以寫了 `:-1000` 的預設值。Linux 使用者若 UID 不是 1000，在 `make dev` 之前 `export UID GID` 一次即可，README 的維運段要提一句。
 
 - [ ] **Step 3: `.dockerignore` 加 `.venv`**
 
@@ -525,6 +584,8 @@ help:
 	@echo "  make dev-reset      - 砍掉 named volume 重建；裝新前端套件後要跑這個"
 	@echo "  make install-host   - host 另裝一份 frontend node_modules，給 IDE 用"
 	@echo "  make test           - backend + frontend 測試"
+	@echo "  make test-backend   - 只跑 pytest"
+	@echo "  make test-frontend  - 只跑 vitest"
 	@echo "  make run-prod       - 本機 build 並跑 production container"
 
 .PHONY: dev
@@ -547,10 +608,19 @@ install-host:
 	# 兩份吃同一個 package-lock.json，不會漂移（spec §5.2）。
 	cd frontend && npm ci
 
-.PHONY: test
-test:
+.PHONY: test-backend
+test-backend:
 	cd backend && DEBUG=True uv run python -m pytest . -v
-	cd frontend && npm test
+
+.PHONY: test-frontend
+test-frontend:
+	# frontend/ 要到 T4 才存在。在那之前這個 target 印一行就結束，
+	# 不可以直接寫 cd frontend：make 會在那一行 abort，
+	# 而 make test 是 owner 唯一背下來的指令。T4 的 Step 12 會把它換成真的 npm test。
+	@echo "frontend 尚未 scaffold（T4 才建），略過"
+
+.PHONY: test
+test: test-backend test-frontend
 
 .PHONY: run-prod
 run-prod:
@@ -591,968 +661,7 @@ git commit -m "feat: add dev docker-compose with backend service, venv outside b
 
 **本 task 的 local 驗收：** `make dev` 起得來，另開 terminal `curl http://127.0.0.1:8000/health` 回 `{"status": "ok"}`，且 container 內 `which python` 是 `/opt/venv/bin/python`。
 
-**Phase 1 結束狀態：** 最終目錄結構已就位，settings 是全新的且 fail-fast 真的會 fail，dev container 起得來。後面每個 task 都直接在最終路徑上寫 code，不需要再改結構。
-
----
-## Phase 2：後端
-
-### Task 4: Provider layer (base + TaiwanProvider + registry)
-
-**Files:**
-- Create: `backend/events/__init__.py`（空檔）、`backend/events/apps.py`、`backend/events/providers/__init__.py`、`backend/events/providers/base.py`、`backend/events/providers/taiwan.py`
-- Create: `backend/events/tests/__init__.py`（空檔）、`backend/events/tests/test_providers.py`
-
-**Interfaces:**
-- Produces: `Event` dataclass (`title: str, start_time: datetime, end_time: datetime|None, location: str, location_name: str|None, on_sales: str|None, price: str|None`)；`UpstreamError(Exception)`；`normalize_place(text: str) -> str`；`BaseProvider` 帶 `code/name/locations/categories` 屬性 + `fetch_events(category_id: int) -> list[Event]`；`PROVIDERS: dict[str, BaseProvider]`，皆在 `events.providers`。T5（services）與 T6（API）消費這些介面。
-- **刻意不提供 `get_provider()`。** 404 的判定放在 view 層用 `PROVIDERS.get(country)`，services 不 raise `KeyError`。若讓 `except KeyError` 包住整個 service 呼叫，內部任何深層 `KeyError` 都會變成假的「不支援這個國家」，排查方向會被完全帶偏（spec §3.1）。
-
-- [ ] **Step 1: 寫失敗的測試**
-
-`backend/events/tests/test_providers.py`:
-
-```python
-import pytest
-import requests
-import responses
-
-from events.providers import PROVIDERS
-from events.providers.base import UpstreamError, normalize_place
-from events.providers.taiwan import MOC_API_URL, TaiwanProvider
-
-MOC_PAYLOAD = [
-    {
-        "title": "模擬音樂會1",
-        "showInfo": [{
-            "location": "臺北市中正區中山南路21-1號",
-            "time": "2026/07/12 19:30:00",
-            "locationName": "國家音樂廳",
-            "onSales": "Y",
-            "price": "500",
-            "endTime": "2026/07/12 21:30:00",
-        }],
-    },
-    {
-        "title": "壞資料活動",
-        "showInfo": [{"location": "臺中市", "time": "not-a-date"}],
-    },
-    {
-        "title": "沒地點活動",
-        "showInfo": [{"location": "", "time": "2026/07/13 10:00:00"}],
-    },
-]
-
-
-class TestRegistry:
-    def test_taiwan_registered(self):
-        assert PROVIDERS["tw"].code == "tw"
-
-    def test_unknown_country_absent(self):
-        assert PROVIDERS.get("xx") is None
-
-    def test_metadata_shape(self):
-        p = PROVIDERS["tw"]
-        assert {"value": "臺北", "label": {"zh": "臺北", "en": "Taipei"}} in p.locations
-        assert any(c["value"] == 1 and c["label"]["zh"] == "音樂" for c in p.categories)
-
-    def test_yilan_and_lienchiang_are_present(self):
-        # 實測 MoC category 1/6/17 共 1320 筆：宜蘭縣有 9 筆，而舊清單裡沒有宜蘭，
-        # 使用者永遠選不到。連江同樣缺漏。
-        values = {loc["value"] for loc in PROVIDERS["tw"].locations}
-        assert "宜蘭" in values
-        assert "連江" in values
-
-    def test_location_count_is_twenty(self):
-        assert len(PROVIDERS["tw"].locations) == 20
-
-
-class TestNormalizePlace:
-    def test_converts_tai_variant(self):
-        # 實測同一批資料：11 筆寫「台北市」，其餘寫「臺北市」。
-        assert normalize_place("台北市中正區") == "臺北市中正區"
-
-    def test_leaves_standard_form_alone(self):
-        assert normalize_place("臺北市中正區") == "臺北市中正區"
-
-
-class TestTaiwanFetch:
-    @responses.activate
-    def test_success_parses_and_skips_bad_rows(self):
-        responses.get(MOC_API_URL, json=MOC_PAYLOAD)
-        events = TaiwanProvider().fetch_events(category_id=1)
-        assert len(events) == 1  # bad-time and empty-location rows skipped
-        e = events[0]
-        assert e.title == "模擬音樂會1"
-        assert e.start_time.strftime("%Y-%m") == "2026-07"
-        assert e.end_time.strftime("%Y-%m-%d") == "2026-07-12"
-        assert e.location_name == "國家音樂廳"
-
-    @responses.activate
-    def test_http_error_raises_upstream_error(self):
-        responses.get(MOC_API_URL, status=500)
-        with pytest.raises(UpstreamError):
-            TaiwanProvider().fetch_events(category_id=1)
-
-    @responses.activate
-    def test_non_json_raises_upstream_error(self):
-        responses.get(MOC_API_URL, body="<html>maintenance</html>")
-        with pytest.raises(UpstreamError):
-            TaiwanProvider().fetch_events(category_id=1)
-
-    @responses.activate
-    def test_network_failure_raises_upstream_error(self):
-        responses.get(MOC_API_URL, body=requests.ConnectionError("boom"))
-        with pytest.raises(UpstreamError):
-            TaiwanProvider().fetch_events(category_id=1)
-
-    @responses.activate
-    def test_timeout_raises_upstream_error(self):
-        # timeout 是 verify=False 打政府 API 最可能發生的失敗模式，spec §8 明列要測。
-        responses.get(MOC_API_URL, body=requests.Timeout("slow"))
-        with pytest.raises(UpstreamError):
-            TaiwanProvider().fetch_events(category_id=1)
-```
-
-- [ ] **Step 2: 跑測試確認會失敗**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest events/tests/test_providers.py -v
-```
-
-Expected: FAIL / collection error：`ModuleNotFoundError: No module named 'events'`。
-
-- [ ] **Step 3: 實作**
-
-`backend/events/apps.py`:
-
-```python
-from django.apps import AppConfig
-
-
-class EventsConfig(AppConfig):
-    name = "events"
-```
-
-`backend/events/providers/base.py`:
-
-```python
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime
-
-
-class UpstreamError(Exception):
-    """External data source failed (network, HTTP error, bad payload)."""
-
-
-def normalize_place(text: str) -> str:
-    """Fold the 台 / 臺 variant so place matching does not silently drop rows.
-
-    MoC 的 location 是自由文字。實測有 11 筆寫「台北市」、其餘寫「臺北市」，
-    字面 substring 比對會把前者丟掉，而使用者看到的失敗是「查無結果」，
-    與真的沒活動長得一模一樣，是最難被回報的一種 bug（spec §3.2）。
-    """
-    return text.replace("台", "臺")
-
-
-@dataclass
-class Event:
-    title: str
-    start_time: datetime
-    end_time: datetime | None
-    location: str
-    location_name: str | None
-    on_sales: str | None
-    price: str | None
-
-
-class BaseProvider(ABC):
-    """One provider per country: knows its data source and its option lists.
-
-    界線（spec §3.2）：不要再加 provider factory、不要加 registry.py、
-    不要讓查表做 fallback。這個 ABC 只有一個實作，它換到的是
-    README「Adding a country」那幾步真的成立。
-    """
-
-    code: str                # e.g. "tw"：used in API paths
-    name: dict[str, str]     # {"zh": "台灣", "en": "Taiwan"}
-    locations: list[dict]    # [{"value": "臺北", "label": {"zh": "臺北", "en": "Taipei"}}]
-    categories: list[dict]   # [{"value": 1, "label": {"zh": "音樂", "en": "Music"}}]
-
-    @abstractmethod
-    def fetch_events(self, category_id: int) -> list[Event]:
-        """Fetch ALL events for one category. Raises UpstreamError on failure."""
-```
-
-`backend/events/providers/taiwan.py`:
-
-```python
-from datetime import datetime
-
-import requests
-import urllib3
-from toolkitsy.logger import logger
-
-from .base import BaseProvider, Event, UpstreamError
-
-# cloud.culture.tw 的 SSL 憑證缺少 Subject Key Identifier，Python 3.13 會拒絕連線。
-# 外部政府 API 無法修改其憑證，只好關閉驗證並抑制警告；只影響這一個資料源。
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-MOC_API_URL = "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do"
-TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
-
-# 20 個地區前綴，涵蓋台灣 22 個縣市（新竹與嘉義各含市與縣，用同一個前綴比對）。
-# 舊清單只有 18 個，漏掉宜蘭與連江： 實測 MoC 資料裡宜蘭縣有 9 筆，使用者永遠選不到。
-_LOCATIONS = [
-    ("臺北", "Taipei"), ("新北", "New Taipei City"), ("基隆", "Keelung"),
-    ("桃園", "Taoyuan"), ("新竹", "Hsinchu"), ("苗栗", "Miaoli"),
-    ("臺中", "Taichung"), ("彰化", "Changhua"), ("南投", "Nantou"),
-    ("雲林", "Yunlin"), ("嘉義", "Chiayi"), ("臺南", "Tainan"),
-    ("高雄", "Kaohsiung"), ("屏東", "Pingtung"), ("宜蘭", "Yilan"),
-    ("花蓮", "Hualien"), ("臺東", "Taitung"), ("澎湖", "Penghu"),
-    ("金門", "Kinmen"), ("連江", "Lienchiang"),
-]
-
-_CATEGORIES = [
-    (1, "音樂", "Music"), (2, "戲劇", "Theater"), (3, "舞蹈", "Dance"),
-    (4, "親子", "Family"), (5, "獨立音樂", "Indie Music"), (6, "展覽", "Exhibition"),
-    (7, "講座", "Lecture"), (8, "電影", "Movie"), (11, "綜藝", "Variety Show"),
-    (17, "演唱會", "Concert"), (19, "研習課", "Workshop"), (200, "閱讀", "Reading"),
-]
-
-
-class TaiwanProvider(BaseProvider):
-    code = "tw"
-    name = {"zh": "台灣", "en": "Taiwan"}
-    locations = [{"value": zh, "label": {"zh": zh, "en": en}} for zh, en in _LOCATIONS]
-    categories = [{"value": cid, "label": {"zh": zh, "en": en}} for cid, zh, en in _CATEGORIES]
-
-    def fetch_events(self, category_id: int) -> list[Event]:
-        try:
-            response = requests.get(
-                url=MOC_API_URL,
-                params={"method": "doFindTypeJ", "category": category_id},
-                verify=False,
-                timeout=15,
-            )
-        except requests.RequestException as e:
-            raise UpstreamError(f"MoC API request failed: {e}") from e
-
-        if response.status_code != 200:
-            raise UpstreamError(f"MoC API returned HTTP {response.status_code}")
-
-        try:
-            payload = response.json()
-        except ValueError as e:
-            raise UpstreamError(f"MoC API returned non-JSON body: {e}") from e
-
-        events = []
-        for item in payload:
-            title = item.get("title") or "Untitled"
-            for show in item.get("showInfo", []):
-                event = self._parse_show(title, show)
-                if event:
-                    events.append(event)
-
-        # 格式漂移的 sanity 訊號（spec §3.4）：MoC 改欄位名時 HTTP 仍是 200、
-        # mock 仍全綠、uptime 仍全綠。raw 非空但一筆都 parse 不出來是唯一會亮的燈。
-        if payload and not events:
-            raise UpstreamError(
-                f"MoC returned {len(payload)} raw items but none parsed：payload format may have changed"
-            )
-        return events
-
-    def _parse_show(self, title: str, show: dict) -> Event | None:
-        try:
-            start_time = datetime.strptime(show["time"], TIME_FORMAT)
-        except (KeyError, TypeError, ValueError):
-            logger.warning(f"Skip show with bad time {show.get('time')!r} ({title})")
-            return None
-        location = show.get("location")
-        if not location:
-            logger.warning(f"Skip show without location ({title})")
-            return None
-        # endTime 與 time 同為 MoC 的 YYYY/MM/DD HH:MM:SS；一併轉 datetime，讓 API 的
-        # startTime/endTime 格式一致 (皆 ISO 8601)。缺漏/格式異常 → None，不讓整筆掉。
-        end_raw = show.get("endTime")
-        end_time = None
-        if end_raw:
-            try:
-                end_time = datetime.strptime(end_raw, TIME_FORMAT)
-            except (TypeError, ValueError):
-                logger.warning(f"Bad endTime {end_raw!r} ({title})")
-        return Event(
-            title=title,
-            start_time=start_time,
-            end_time=end_time,
-            location=location,
-            location_name=show.get("locationName"),
-            on_sales=show.get("onSales"),
-            price=show.get("price"),
-        )
-```
-
-`backend/events/providers/__init__.py`:
-
-```python
-from .base import BaseProvider
-from .taiwan import TaiwanProvider
-
-PROVIDERS: dict[str, BaseProvider] = {p.code: p for p in [TaiwanProvider()]}
-```
-
-- [ ] **Step 4: 把 `events` 加進 `INSTALLED_APPS`**
-
-`backend/config/settings.py` 的 `INSTALLED_APPS` 改成：
-
-```python
-INSTALLED_APPS = [
-    "django.contrib.contenttypes",
-    "django.contrib.staticfiles",
-    "events",
-    "health",
-]
-```
-
-- [ ] **Step 5: 跑測試確認會過**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest events/tests/test_providers.py -v
-```
-
-Expected: 12 PASS。
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add backend/events backend/config/settings.py
-git commit -m "feat: add events provider layer with taiwan MoC provider (22 counties, tai-variant folding)"
-```
-
-**本 task 的 local 驗收：** 12 個測試全綠，其中 `test_yilan_and_lienchiang_are_present`
-與 `test_converts_tai_variant` 是這次新補的兩個實測 bug 的守門員。
-
----
-
-### Task 5: Services layer (cache-aside + 區間重疊過濾 + 排序)
-
-**Files:**
-- Create: `backend/events/services.py`
-- Test: `backend/events/tests/test_services.py`
-
-**Interfaces:**
-- Consumes: `events.providers.PROVIDERS`、`Event`、`UpstreamError`、`normalize_place`（T4）。
-- Produces: `search_events(provider: BaseProvider, category_id: int, location: str, month: str) -> list[Event]`：`month` 是 ISO `YYYY-MM`；raises `UpstreamError`。常數 `CACHE_TTL_SECONDS = 43200`、`UPSTREAM_ERROR_KEY = "last_upstream_error"`。函式 `upstream_status() -> dict`。T6（API）消費這些。
-- **`search_events` 收的是 provider 物件不是國家代碼**，這樣 404 的判定完全留在 view 層，services 不需要也不會 raise `KeyError`。
-
-- [ ] **Step 1: 寫失敗的測試**
-
-`backend/events/tests/test_services.py`:
-
-```python
-from datetime import datetime
-from unittest.mock import MagicMock
-
-import pytest
-import responses
-from django.core.cache import cache
-
-from events import services
-from events.providers import PROVIDERS
-from events.providers.base import Event, UpstreamError
-from events.providers.taiwan import MOC_API_URL
-
-
-def make_event(title="演出", start="2026/07/12 19:30:00", end=None, location="臺北市中正區"):
-    fmt = "%Y/%m/%d %H:%M:%S"
-    return Event(
-        title=title,
-        start_time=datetime.strptime(start, fmt),
-        end_time=datetime.strptime(end, fmt) if end else None,
-        location=location, location_name=None,
-        on_sales="Y", price="500",
-    )
-
-
-@pytest.fixture(autouse=True)
-def clear_cache():
-    cache.clear()
-    yield
-    cache.clear()
-
-
-@pytest.fixture
-def fake_provider():
-    provider = MagicMock()
-    provider.code = "tw"
-    provider.fetch_events.return_value = [
-        make_event("七月台北", "2026/07/12 19:30:00", location="臺北市中正區"),
-        make_event("七月台北較早", "2026/07/01 10:00:00", location="臺北市大安區"),
-        make_event("八月台北", "2026/08/03 19:30:00", location="臺北市中正區"),
-        make_event("七月高雄", "2026/07/15 19:30:00", location="高雄市鹽埕區"),
-        make_event("台字異體", "2026/07/20 14:00:00", location="台北市信義區"),
-        make_event("常設展", "2026/01/01 09:00:00", "2026/12/31 18:00:00", "臺北市士林區"),
-    ]
-    return provider
-
-
-def test_filters_by_location_and_iso_month(fake_provider):
-    result = services.search_events(fake_provider, 1, location="臺北", month="2026-07")
-    titles = [e.title for e in result]
-    assert titles == ["常設展", "七月台北較早", "七月台北", "台字異體"]  # sorted by start_time
-
-
-def test_tai_variant_row_is_not_dropped(fake_provider):
-    # 實測 MoC 有 11 筆寫「台北市」。字面 substring 比對會靜默丟掉它們。
-    result = services.search_events(fake_provider, 1, location="臺北", month="2026-07")
-    assert "台字異體" in [e.title for e in result]
-
-
-def test_event_spanning_months_is_found_in_the_middle(fake_provider):
-    # 實測 MoC category=6 的 439 筆 showInfo 有 386 筆跨月（88%），endTime 一筆都沒缺。
-    # 只比對 start_time 的話展覽這個類別整個查不到。
-    result = services.search_events(fake_provider, 1, location="臺北", month="2026-09")
-    assert [e.title for e in result] == ["常設展"]
-
-
-def test_month_with_no_overlap_returns_empty(fake_provider):
-    result = services.search_events(fake_provider, 1, location="高雄", month="2026-09")
-    assert result == []
-
-
-def test_cache_hit_skips_second_upstream_call(fake_provider):
-    services.search_events(fake_provider, 1, location="臺北", month="2026-07")
-    services.search_events(fake_provider, 1, location="高雄", month="2026-07")
-    assert fake_provider.fetch_events.call_count == 1
-
-
-def test_different_category_is_separate_cache_entry(fake_provider):
-    services.search_events(fake_provider, 1, location="臺北", month="2026-07")
-    services.search_events(fake_provider, 2, location="臺北", month="2026-07")
-    assert fake_provider.fetch_events.call_count == 2
-
-
-def test_upstream_error_sets_flag_and_success_clears_it(fake_provider):
-    assert services.upstream_status()["upstream"] == "ok"
-    fake_provider.fetch_events.side_effect = UpstreamError("down")
-    with pytest.raises(UpstreamError):
-        services.search_events(fake_provider, 1, location="臺北", month="2026-07")
-    assert services.upstream_status()["upstream"] == "failing"
-
-    fake_provider.fetch_events.side_effect = None
-    services.search_events(fake_provider, 2, location="臺北", month="2026-07")
-    assert services.upstream_status()["upstream"] == "ok"
-
-
-MOC_PAYLOAD = [{
-    "title": "端到端音樂會",
-    "showInfo": [{
-        "location": "臺北市中正區中山南路21-1號",
-        "time": "2026/07/12 19:30:00",
-        "endTime": "2026/07/12 21:30:00",
-        "locationName": "國家音樂廳",
-        "onSales": "Y",
-        "price": "500",
-    }],
-}]
-
-
-@responses.activate
-def test_end_to_end_from_moc_string_to_iso_month_filter():
-    """不 mock provider：走真的 TaiwanProvider，從 MoC 的 "2026/07/12 19:30:00"
-    字串一路走到 ISO month="2026-07" 的過濾結果。
-
-    沒有這條測試的話，月份格式轉換的兩端各自被 mock 掉（services 測試餵已 parse 好的
-    datetime、provider 測試只驗 parse 不驗過濾），沒有任何一條測試涵蓋整段（spec §8）。
-    """
-    responses.get(MOC_API_URL, json=MOC_PAYLOAD)
-    result = services.search_events(PROVIDERS["tw"], 1, location="臺北", month="2026-07")
-    assert [e.title for e in result] == ["端到端音樂會"]
-```
-
-- [ ] **Step 2: 跑測試確認會失敗**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest events/tests/test_services.py -v
-```
-
-Expected: FAIL：import error（`events.services` 尚不存在）。
-
-- [ ] **Step 3: 實作**
-
-`backend/events/services.py`:
-
-```python
-import time
-from calendar import monthrange
-from datetime import datetime
-
-from django.core.cache import cache
-from toolkitsy.logger import logger
-
-from .providers.base import BaseProvider, Event, UpstreamError, normalize_place
-
-CACHE_TTL_SECONDS = 60 * 60 * 12  # 12h：event data changes slowly (spec §3.3)
-UPSTREAM_ERROR_KEY = "last_upstream_error"
-UPSTREAM_ERROR_TTL = 3600
-
-
-def _month_bounds(month: str) -> tuple[datetime, datetime]:
-    """'2026-07' -> (2026-07-01 00:00:00, 2026-07-31 23:59:59)."""
-    start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
-    last_day = monthrange(start.year, start.month)[1]
-    end = start.replace(day=last_day, hour=23, minute=59, second=59)
-    return start, end
-
-
-def _matches(event: Event, location: str, start: datetime, end: datetime) -> bool:
-    if normalize_place(location) not in normalize_place(event.location):
-        return False
-    # 區間重疊，不是比對開始月份。實測 88% 的展覽跨月，只比 start_time 會讓
-    # 一檔 1 月開跑、12 月結束的常設展在 2 月到 12 月全部查不到（spec §3.3）。
-    event_end = event.end_time or event.start_time
-    return event.start_time <= end and event_end >= start
-
-
-def search_events(
-    provider: BaseProvider, category_id: int, location: str, month: str
-) -> list[Event]:
-    """month is ISO 'YYYY-MM' (API contract). Raises UpstreamError when the source is down.
-
-    收 provider 物件而不是國家代碼：404 的判定完全留在 view 層，這裡不 raise KeyError。
-    """
-    cache_key = f"events:{provider.code}:{category_id}"
-    events = cache.get(cache_key)
-    if events is None:
-        logger.info(f"Cache miss: {cache_key}")
-        try:
-            events = provider.fetch_events(category_id)
-        except UpstreamError:
-            cache.set(UPSTREAM_ERROR_KEY, int(time.time()), UPSTREAM_ERROR_TTL)
-            raise
-        cache.delete(UPSTREAM_ERROR_KEY)
-        cache.set(cache_key, events, CACHE_TTL_SECONDS)
-
-    start, end = _month_bounds(month)
-    matched = [e for e in events if _matches(e, location, start, end)]
-    return sorted(matched, key=lambda e: e.start_time)
-
-
-def upstream_status() -> dict:
-    """Read-only view of the upstream health flag. Never calls the upstream itself."""
-    failed_at = cache.get(UPSTREAM_ERROR_KEY)
-    if failed_at is None:
-        return {"upstream": "ok"}
-    return {"upstream": "failing", "since": failed_at}
-```
-
-- [ ] **Step 4: 跑測試確認會過**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest events/tests/test_services.py -v
-```
-
-Expected: 8 PASS。
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add backend/events/services.py backend/events/tests/test_services.py
-git commit -m "feat: add events service layer with cache-aside, interval month filter, upstream flag"
-```
-
-**本 task 的 local 驗收：** 8 個測試全綠。特別確認
-`test_event_spanning_months_is_found_in_the_middle` 是綠的，那條擋的是 88% 的展覽資料。
-
----
-
-### Task 6: API endpoints + wiring ★ checkpoint
-
-**Files:**
-- Create: `backend/events/views.py`、`backend/events/urls.py`、`backend/events/middleware.py`
-- Modify: `backend/config/urls.py`、`backend/config/settings.py`、`backend/health/urls.py`、`backend/health/views.py`、`backend/health/tests.py`
-- Test: `backend/events/tests/test_api.py`
-
-**Interfaces:**
-- Consumes: `services.search_events`、`services.upstream_status`（T5）、`PROVIDERS`（T4）。
-- Produces: `GET /api/v1/countries` → `[{code, name, locations, categories}]`；`GET /api/v1/<country>/events?category=&location=&month=` → `{"events": [{title, startTime, endTime, location, locationName, onSales, price, googleMapUrl, googleSearchUrl}]}`，`startTime`/`endTime` 為 ISO 8601；錯誤格式 `{"error": {"code": "...", "message": "..."}}`；`GET /health/upstream`。前端（T8）消費這組精確欄位。
-
-- [ ] **Step 1: 寫失敗的測試**
-
-`backend/events/tests/test_api.py`:
-
-```python
-import json
-from datetime import datetime
-from unittest.mock import patch
-
-from events.providers.base import Event, UpstreamError
-
-
-def _fake_events():
-    return [Event(
-        title="模擬音樂會", start_time=datetime(2026, 7, 12, 19, 30),
-        end_time=datetime(2026, 7, 12, 21, 30), location="臺北市中正區中山南路21-1號",
-        location_name="國家音樂廳", on_sales="Y", price="500",
-    )]
-
-
-class TestCountriesApi:
-    def test_returns_taiwan(self, client):
-        resp = client.get("/api/v1/countries")
-        assert resp.status_code == 200
-        data = json.loads(resp.content)
-        assert data[0]["code"] == "tw"
-        assert data[0]["name"]["en"] == "Taiwan"
-        assert len(data[0]["locations"]) == 20
-        assert len(data[0]["categories"]) == 12
-
-
-class TestEventsApi:
-    URL = "/api/v1/tw/events"
-    OK_PARAMS = {"category": "1", "location": "臺北", "month": "2026-07"}
-
-    @patch("events.views.services.search_events", return_value=_fake_events())
-    def test_success_shape(self, _mock, client):
-        resp = client.get(self.URL, self.OK_PARAMS)
-        assert resp.status_code == 200
-        event = json.loads(resp.content)["events"][0]
-        assert event["title"] == "模擬音樂會"
-        assert event["startTime"] == "2026-07-12T19:30:00"
-        assert "query=" in event["googleMapUrl"]
-        assert "q=" in event["googleSearchUrl"]
-
-    @patch("events.views.services.search_events", return_value=[])
-    def test_empty_result_is_200_with_empty_list(self, _mock, client):
-        resp = client.get(self.URL, self.OK_PARAMS)
-        assert resp.status_code == 200
-        assert json.loads(resp.content) == {"events": []}
-
-    def test_non_numeric_category_400(self, client):
-        resp = client.get(self.URL, {**self.OK_PARAMS, "category": "abc"})
-        assert resp.status_code == 400
-        assert json.loads(resp.content)["error"]["code"] == "INVALID_PARAM"
-
-    def test_category_outside_whitelist_400(self, client):
-        # isdigit() 不夠：category=999999 會實際打上游並佔用一個 cache entry，
-        # 連續丟不同 category 可以把 LocMemCache 預設的 300 個 entry 上限洗掉。
-        resp = client.get(self.URL, {**self.OK_PARAMS, "category": "999999"})
-        assert resp.status_code == 400
-        assert json.loads(resp.content)["error"]["code"] == "INVALID_PARAM"
-
-    def test_location_outside_whitelist_400(self, client):
-        resp = client.get(self.URL, {**self.OK_PARAMS, "location": "東京"})
-        assert resp.status_code == 400
-
-    def test_bad_month_400(self, client):
-        resp = client.get(self.URL, {**self.OK_PARAMS, "month": "2026/07"})
-        assert resp.status_code == 400
-
-    def test_unknown_country_404(self, client):
-        resp = client.get("/api/v1/xx/events", self.OK_PARAMS)
-        assert resp.status_code == 404
-        assert json.loads(resp.content)["error"]["code"] == "UNKNOWN_COUNTRY"
-
-    @patch("events.views.services.search_events", side_effect=UpstreamError("down"))
-    def test_upstream_failure_502(self, _mock, client):
-        resp = client.get(self.URL, self.OK_PARAMS)
-        assert resp.status_code == 502
-        assert json.loads(resp.content)["error"]["code"] == "UPSTREAM_ERROR"
-
-    def test_response_has_request_id_header(self, client):
-        resp = client.get("/api/v1/countries")
-        assert resp.headers.get("X-Request-ID")
-```
-
-`backend/health/tests.py`（整份取代：加上 upstream endpoint 的測試）:
-
-```python
-import json
-
-from django.core.cache import cache
-
-from events.services import UPSTREAM_ERROR_KEY
-
-
-def test_health(client):
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert json.loads(resp.content) == {"status": "ok"}
-
-
-def test_upstream_ok_when_no_flag(client):
-    cache.delete(UPSTREAM_ERROR_KEY)
-    resp = client.get("/health/upstream")
-    assert resp.status_code == 200
-    assert json.loads(resp.content)["upstream"] == "ok"
-
-
-def test_upstream_503_when_flag_set(client):
-    cache.set(UPSTREAM_ERROR_KEY, 1750000000, 3600)
-    resp = client.get("/health/upstream")
-    assert resp.status_code == 503
-    assert json.loads(resp.content)["upstream"] == "failing"
-    cache.delete(UPSTREAM_ERROR_KEY)
-```
-
-- [ ] **Step 2: 跑測試確認會失敗**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest events/tests/test_api.py health/tests.py -v
-```
-
-Expected: FAIL：404（路由尚未接上）/ import error。
-
-- [ ] **Step 3: 實作 views / urls / middleware**
-
-`backend/events/views.py`:
-
-```python
-import re
-from urllib.parse import quote_plus
-
-from django.http import JsonResponse
-from toolkitsy.logger import logger
-
-from . import services
-from .providers import PROVIDERS
-from .providers.base import Event, UpstreamError
-
-MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
-
-def _error(status: int, code: str, message: str) -> JsonResponse:
-    return JsonResponse({"error": {"code": code, "message": message}}, status=status)
-
-
-def _event_to_json(event: Event) -> dict:
-    return {
-        "title": event.title,
-        "startTime": event.start_time.isoformat(),
-        "endTime": event.end_time.isoformat() if event.end_time else None,
-        "location": event.location,
-        "locationName": event.location_name,
-        "onSales": event.on_sales,
-        "price": event.price,
-        "googleMapUrl": f"https://www.google.com/maps/search/?api=1&query={quote_plus(event.location)}",
-        "googleSearchUrl": f"https://www.google.com/search?q={quote_plus(event.title)}",
-    }
-
-
-def countries(request):
-    data = [
-        {"code": p.code, "name": p.name, "locations": p.locations, "categories": p.categories}
-        for p in PROVIDERS.values()
-    ]
-    return JsonResponse(data, safe=False)
-
-
-def events(request, country: str):
-    # 404 在這裡判，不靠 except KeyError 包住整個 service 呼叫： 那樣的話
-    # 內部任何深層 KeyError 都會變成假的「不支援這個國家」（spec §3.1）。
-    provider = PROVIDERS.get(country)
-    if provider is None:
-        return _error(404, "UNKNOWN_COUNTRY", f"country '{country}' is not supported")
-
-    category = request.GET.get("category", "")
-    location = request.GET.get("location", "")
-    month = request.GET.get("month", "")
-
-    if not category.isdigit():
-        return _error(400, "INVALID_PARAM", "category must be an integer")
-    # 白名單比對。只擋非數字是不夠的（spec §3.1）。
-    if int(category) not in {c["value"] for c in provider.categories}:
-        return _error(400, "INVALID_PARAM", f"category '{category}' is not available for '{country}'")
-    if location not in {loc["value"] for loc in provider.locations}:
-        return _error(400, "INVALID_PARAM", f"location '{location}' is not available for '{country}'")
-    if not MONTH_PATTERN.match(month):
-        return _error(400, "INVALID_PARAM", "month must be YYYY-MM")
-
-    try:
-        result = services.search_events(provider, int(category), location, month)
-    except UpstreamError as e:
-        logger.error(f"Upstream failure: {e}")
-        return _error(502, "UPSTREAM_ERROR", "Data source is temporarily unavailable")
-
-    logger.info(f"Search {country}/{category}/{location}/{month}: {len(result)} events")
-    return JsonResponse({"events": [_event_to_json(e) for e in result]})
-```
-
-`backend/events/urls.py`:
-
-```python
-from django.urls import path
-
-from . import views
-
-urlpatterns = [
-    path("countries", views.countries, name="api_countries"),
-    path("<str:country>/events", views.events, name="api_events"),
-]
-```
-
-`backend/events/middleware.py`:
-
-```python
-import uuid
-
-from toolkitsy.logger import set_correlation_id
-
-
-class CorrelationIdMiddleware:
-    """Give every request a short correlation id; toolkitsy logs include it.
-
-    已知限制（spec §3.4）：machine 是 scale-to-zero、fly logs 只有即時串流，
-    事後拿到這個 id 也還原不了當時的 log。README 有寫明這一點。
-    """
-
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        correlation_id = uuid.uuid4().hex[:8]
-        set_correlation_id(correlation_id)
-        response = self.get_response(request)
-        response["X-Request-ID"] = correlation_id
-        return response
-```
-
-`backend/health/views.py`（整份取代）:
-
-```python
-from django.http import JsonResponse
-
-from events import services
-
-
-def health(request):
-    """Liveness only：deliberately touches no external dependency.
-
-    上游（MoC）掛掉時這裡照樣回 200。監控要指向 /health/upstream，不是這支（spec §3.4）。
-    """
-    return JsonResponse({"status": "ok"})
-
-
-def upstream(request):
-    """Reads the cached upstream health flag. Never calls the upstream itself."""
-    status = services.upstream_status()
-    return JsonResponse(status, status=200 if status["upstream"] == "ok" else 503)
-```
-
-`backend/health/urls.py`（整份取代）:
-
-```python
-from django.urls import path
-
-from . import views
-
-urlpatterns = [
-    path("", views.health, name="health"),
-    path("/upstream", views.upstream, name="health_upstream"),
-]
-```
-
-`backend/config/urls.py`（整份取代）:
-
-```python
-from django.urls import include, path
-
-urlpatterns = [
-    path("health", include("health.urls")),
-    path("api/v1/", include("events.urls")),
-]
-```
-
-- [ ] **Step 4: 把 middleware 加進 settings**
-
-`backend/config/settings.py` 的 `MIDDLEWARE` 改成：
-
-```python
-MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "events.middleware.CorrelationIdMiddleware",
-]
-```
-
-- [ ] **Step 5: 跑完整後端測試**
-
-```bash
-cd backend && DEBUG=True uv run python -m pytest . -v
-```
-
-Expected: 全部 PASS（providers 12 + services 8 + api 9 + health 3 = 32）。
-
-- [ ] **★ Step 6: checkpoint：打真實 MoC，量資料大小，確認 contract**
-
-> **這個 checkpoint 的通過條件刻意不接受空陣列。** 月份過濾壞掉時 API 永遠回空，
-> 與「這個月剛好沒活動」在 checkpoint 上長得一模一樣（spec §8.1）。
-> 所以先直接打上游確認哪個 category 有資料，再對該組合斷言筆數大於 0。
-
-先確認上游現在有什麼，並順手量資料量（spec §10 要求把數字寫回文件）：
-
-```bash
-curl -sk "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do?method=doFindTypeJ&category=6" -o /tmp/moc6.json
-wc -c /tmp/moc6.json
-python3 -c "
-import json
-d = json.load(open('/tmp/moc6.json'))
-shows = [s for item in d for s in item.get('showInfo', [])]
-print('items:', len(d), 'showInfo:', len(shows))
-months = sorted({s['time'][:7] for s in shows if s.get('time')})
-print('months present:', months[:12])
-print('spanning:', sum(1 for s in shows if s.get('endTime') and s['endTime'][:7] != s.get('time','')[:7]))
-"
-```
-
-從輸出的 `months present` 裡挑一個**確定有資料的月份**，記成 `HAVE_MONTH`（例如 `2026-09`）。
-把 `wc -c` 與 `showInfo` 的數字補進 spec §10 的「單 category 的資料量未量測」那一條。
-
-起 server 驗證三件事：
-
-```bash
-cd backend && DEBUG=True uv run python manage.py runserver 8000 &
-sleep 3
-
-# 1. countries 回傳形狀正確（20 locations、12 categories）
-curl -s "http://127.0.0.1:8000/api/v1/countries" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d[0]['locations'])==20, len(d[0]['locations']); assert len(d[0]['categories'])==12; print('countries OK')"
-
-# 2. events 端點打真實 MoC，該月份必須有資料（空陣列一律算沒過）
-HAVE_MONTH=2026-09   # ← 換成上面挑出來的那個月份
-curl -s "http://127.0.0.1:8000/api/v1/tw/events?category=6&location=%E8%87%BA%E5%8C%97&month=${HAVE_MONTH}" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'events' in d, d; n=len(d['events']); assert n>0, f'FAIL: 0 events：月份過濾可能壞了'; print('events OK', n, 'items')"
-
-# 3. 錯誤格式正確
-curl -s -o /tmp/e1.json -w "%{http_code}\n" "http://127.0.0.1:8000/api/v1/xx/events?category=1&location=%E8%87%BA%E5%8C%97&month=2026-07"; cat /tmp/e1.json; echo
-curl -s -o /tmp/e2.json -w "%{http_code}\n" "http://127.0.0.1:8000/api/v1/tw/events?category=999999&location=%E8%87%BA%E5%8C%97&month=2026-07"; cat /tmp/e2.json; echo
-
-# 4. upstream health endpoint
-curl -s "http://127.0.0.1:8000/health/upstream"; echo
-
-kill %1
-```
-
-Expected：`countries OK`；`events OK N items` 且 **N 大於 0**；第一個 curl 回 `404` 且 body 含 `UNKNOWN_COUNTRY`；第二個回 `400` 且含 `INVALID_PARAM`；最後一行是 `{"upstream": "ok"}`。
-
-**全部符合才算 checkpoint 通過。** 若第 2 項是 0 筆，回 T5 檢查 `_matches` 的區間判斷，不要放行。
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add backend
-git commit -m "feat: add /api/v1 endpoints with whitelist validation, upstream health endpoint"
-```
-
-**本 task 的 local 驗收：** 32 個測試全綠，加上 Step 6 的四項 curl 全部符合。
-這是進前端之前的最後一道關卡。
-
-**Phase 2 結束狀態：** API 回得出真實資料，跨月與異體字都在測試與真實資料上驗過。
-
----
-## Phase 3：前端
-
-### Task 7: Vite + React + TS + Tailwind + Vitest scaffold ★ checkpoint
+### Task 4: Vite + React + TS + Tailwind + Vitest scaffold ★ checkpoint
 
 **Files:**
 - Create: `frontend/`（scaffold）、`frontend/Dockerfile.dev`
@@ -1743,12 +852,23 @@ Expected: 兩個都是 `200`。
 應該印出一行含 `hmr update` 的訊息。看到這行就代表 bind mount + polling + Vite
 整條路徑都通了。這個編輯留著即可，T11 會整份重寫 `App.tsx`。
 
-驗證 proxy：瀏覽器開 `http://127.0.0.1:5173/api/v1/countries`，應該看到 JSON
-（Vite 把它代理到 backend:8000）。
+驗證 proxy：
+
+```bash
+curl -s http://127.0.0.1:5173/health
+```
+
+Expected: `{"status": "ok"}`。這是**經由 Vite 代理**拿到的後端回應，
+證明 `server.proxy` 的設定通了。
+
+> **不要拿 `/api/v1/countries` 驗這一步。** 這個 task 現在排在後端三個 task 之前
+> （v5 的順序改動），那個 endpoint 要到 T7 才存在，拿它來驗會得到 404
+> 而讓人以為 proxy 壞了。`/health` 在 T2 就有了。
+> 這也代表 `vite.config.ts` 的 proxy 要同時代理 `/api` 與 `/health` 兩條前綴。
 
 `Ctrl+C` 結束。
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add frontend docker-compose.dev.yml
@@ -1756,9 +876,1097 @@ git commit -m "feat: scaffold vite react-ts frontend with tailwind, vitest, dev 
 ```
 
 **本 task 的 local 驗收：** 瀏覽器開 `http://127.0.0.1:5173` 有 Vite 預設畫面，
-改一行文字會自動更新，`/api/v1/countries` 代理得到 JSON。
+改一行文字會自動更新，`curl :5173/health` 經由代理拿到後端的 JSON。
+
+- [ ] **Step 12: 把 `test-frontend` 接進 makefile**
+
+T3 寫 makefile 時 `frontend/` 還不存在，所以 `test-frontend` 那個 target 當時是
+空殼（只印一行「frontend 尚未 scaffold」）。現在把它接上：
+
+```makefile
+test-frontend:
+	cd frontend && npm test
+```
+
+```bash
+make test
+```
+
+Expected: 後端測試全綠，前端 vitest 印出 `no test files found` 之類的訊息但**不報錯**
+（此時還沒有任何前端測試，T8 才開始寫）。
+
+> **這一步是 v5 把 scaffold 提前的整個理由。** v4 的 makefile 在 T3 就硬寫了
+> `cd frontend && npm test`，而 `frontend/` 要到後端三個 task 之後才出現，
+> 所以那三個 task 期間 `make test` 會在那一行直接 abort。
 
 ---
+
+**Phase 1 結束狀態：** 最終目錄結構已就位，settings 是全新的且 fail-fast 真的會 fail，dev 的兩個 container 都起得來，`make test` 前後端兩半都跑得動。後面每個 task 都直接在最終路徑上寫 code，不需要再改結構，也不需要再動 makefile 與 compose。
+
+---
+## Phase 2：後端
+
+### Task 5: Provider layer (base + TaiwanProvider + registry)
+
+**Files:**
+- Create: `backend/events/__init__.py`（空檔）、`backend/events/apps.py`、`backend/events/providers/__init__.py`、`backend/events/providers/base.py`、`backend/events/providers/taiwan.py`
+- Create: `backend/events/tests/__init__.py`（空檔）、`backend/events/tests/test_providers.py`
+
+**Interfaces:**
+- Produces: `Event` dataclass (`title: str, start_time: datetime, end_time: datetime|None, location: str, location_name: str|None, on_sales: str|None, price: str|None`)；`UpstreamError(Exception)`；`normalize_place(text: str) -> str`；`BaseProvider` 帶 `code/name/locations/categories` 屬性 + `fetch_events(category_id: int) -> list[Event]`；`PROVIDERS: dict[str, BaseProvider]`，皆在 `events.providers`。T6（services）與 T7（API）消費這些介面。
+- **刻意不提供 `get_provider()`。** 404 的判定放在 view 層用 `PROVIDERS.get(country)`，services 不 raise `KeyError`。若讓 `except KeyError` 包住整個 service 呼叫，內部任何深層 `KeyError` 都會變成假的「不支援這個國家」，排查方向會被完全帶偏（spec §3.1）。
+
+- [ ] **Step 1: 寫失敗的測試**
+
+`backend/events/tests/test_providers.py`:
+
+```python
+import pytest
+import requests
+import responses
+
+from events.providers import PROVIDERS
+from events.providers.base import UpstreamError, normalize_place
+from events.providers.taiwan import MOC_API_URL, TaiwanProvider
+
+MOC_PAYLOAD = [
+    {
+        "title": "模擬音樂會1",
+        "showInfo": [{
+            "location": "臺北市中正區中山南路21-1號",
+            "time": "2026/07/12 19:30:00",
+            "locationName": "國家音樂廳",
+            "onSales": "Y",
+            "price": "500",
+            "endTime": "2026/07/12 21:30:00",
+        }],
+    },
+    {
+        "title": "壞資料活動",
+        "showInfo": [{"location": "臺中市", "time": "not-a-date"}],
+    },
+    {
+        "title": "沒地點活動",
+        "showInfo": [{"location": "", "time": "2026/07/13 10:00:00"}],
+    },
+]
+
+
+class TestRegistry:
+    def test_taiwan_registered(self):
+        assert PROVIDERS["tw"].code == "tw"
+
+    def test_unknown_country_absent(self):
+        assert PROVIDERS.get("xx") is None
+
+    def test_metadata_shape(self):
+        p = PROVIDERS["tw"]
+        assert {"value": "臺北", "label": {"zh": "臺北", "en": "Taipei"}} in p.locations
+        assert any(c["value"] == 1 and c["label"]["zh"] == "音樂" for c in p.categories)
+
+    def test_yilan_and_lienchiang_are_present(self):
+        # 實測 MoC category 1/6/17 共 1320 筆：宜蘭縣有 9 筆，而舊清單裡沒有宜蘭，
+        # 使用者永遠選不到。連江同樣缺漏。
+        values = {loc["value"] for loc in PROVIDERS["tw"].locations}
+        assert "宜蘭" in values
+        assert "連江" in values
+
+    def test_location_prefixes_cover_22_counties(self):
+        # 20 個前綴涵蓋 22 個縣市：新竹市與新竹縣共用「新竹」，嘉義市與嘉義縣共用「嘉義」。
+        # 名稱不寫 is_twenty： 那與 spec 標題的「22 個縣市」對不上，
+        # 3am 讀起來像測試壞了，而修法會是補上新竹市與嘉義市、弄壞三處斷言。
+        assert len(PROVIDERS["tw"].locations) == 20
+
+
+class TestNormalizePlace:
+    def test_converts_tai_variant(self):
+        # 實測同一批資料：11 筆寫「台北市」，其餘寫「臺北市」。
+        assert normalize_place("台北市中正區") == "臺北市中正區"
+
+    def test_leaves_standard_form_alone(self):
+        assert normalize_place("臺北市中正區") == "臺北市中正區"
+
+
+class TestTaiwanFetch:
+    @responses.activate
+    def test_success_parses_and_skips_bad_rows(self):
+        responses.get(MOC_API_URL, json=MOC_PAYLOAD)
+        events = TaiwanProvider().fetch_events(category_id=1)
+        assert len(events) == 1  # bad-time and empty-location rows skipped
+        e = events[0]
+        assert e.title == "模擬音樂會1"
+        assert e.start_time.strftime("%Y-%m") == "2026-07"
+        assert e.end_time.strftime("%Y-%m-%d") == "2026-07-12"
+        assert e.location_name == "國家音樂廳"
+
+    @responses.activate
+    def test_http_error_raises_upstream_error(self):
+        responses.get(MOC_API_URL, status=500)
+        with pytest.raises(UpstreamError):
+            TaiwanProvider().fetch_events(category_id=1)
+
+    @responses.activate
+    def test_non_json_raises_upstream_error(self):
+        responses.get(MOC_API_URL, body="<html>maintenance</html>")
+        with pytest.raises(UpstreamError):
+            TaiwanProvider().fetch_events(category_id=1)
+
+    @responses.activate
+    def test_network_failure_raises_upstream_error(self):
+        responses.get(MOC_API_URL, body=requests.ConnectionError("boom"))
+        with pytest.raises(UpstreamError):
+            TaiwanProvider().fetch_events(category_id=1)
+
+    @responses.activate
+    def test_timeout_raises_upstream_error(self):
+        # timeout 是 verify=False 打政府 API 最可能發生的失敗模式，spec §8 明列要測。
+        responses.get(MOC_API_URL, body=requests.Timeout("slow"))
+        with pytest.raises(UpstreamError):
+            TaiwanProvider().fetch_events(category_id=1)
+```
+
+- [ ] **Step 2: 跑測試確認會失敗**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest events/tests/test_providers.py -v
+```
+
+Expected: FAIL / collection error：`ModuleNotFoundError: No module named 'events'`。
+
+- [ ] **Step 3: 實作**
+
+`backend/events/apps.py`:
+
+```python
+from django.apps import AppConfig
+
+
+class EventsConfig(AppConfig):
+    name = "events"
+```
+
+`backend/events/providers/base.py`:
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+
+
+class UpstreamError(Exception):
+    """External data source failed (network, HTTP error, bad payload)."""
+
+
+def normalize_place(text: str) -> str:
+    """Fold the 台 / 臺 variant so place matching does not silently drop rows.
+
+    MoC 的 location 是自由文字。實測有 11 筆寫「台北市」、其餘寫「臺北市」，
+    字面 substring 比對會把前者丟掉，而使用者看到的失敗是「查無結果」，
+    與真的沒活動長得一模一樣，是最難被回報的一種 bug（spec §3.2）。
+    """
+    return text.replace("台", "臺")
+
+
+@dataclass
+class Event:
+    title: str
+    start_time: datetime
+    end_time: datetime | None
+    location: str
+    location_name: str | None
+    on_sales: str | None
+    price: str | None
+
+
+class BaseProvider(ABC):
+    """One provider per country: knows its data source and its option lists.
+
+    界線（spec §3.2）：不要再加 provider factory、不要加 registry.py、
+    不要讓查表做 fallback。這個 ABC 只有一個實作，它換到的是
+    README「Adding a country」那幾步真的成立。
+    """
+
+    code: str                # e.g. "tw"：used in API paths
+    name: dict[str, str]     # {"zh": "台灣", "en": "Taiwan"}
+    locations: list[dict]    # [{"value": "臺北", "label": {"zh": "臺北", "en": "Taipei"}}]
+    categories: list[dict]   # [{"value": 1, "label": {"zh": "音樂", "en": "Music"}}]
+
+    @abstractmethod
+    def fetch_events(self, category_id: int) -> list[Event]:
+        """Fetch ALL events for one category. Raises UpstreamError on failure."""
+```
+
+`backend/events/providers/taiwan.py`:
+
+```python
+from datetime import datetime
+
+import requests
+import urllib3
+from toolkitsy.logger import logger
+
+from .base import BaseProvider, Event, UpstreamError
+
+# cloud.culture.tw 的 SSL 憑證缺少 Subject Key Identifier，Python 3.13 會拒絕連線。
+# 外部政府 API 無法修改其憑證，只好關閉驗證並抑制警告；只影響這一個資料源。
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+MOC_API_URL = "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do"
+TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
+
+# 20 個地區前綴，涵蓋台灣 22 個縣市（新竹與嘉義各含市與縣，用同一個前綴比對）。
+# 舊清單只有 18 個，漏掉宜蘭與連江： 實測 MoC 資料裡宜蘭縣有 9 筆，使用者永遠選不到。
+_LOCATIONS = [
+    ("臺北", "Taipei"), ("新北", "New Taipei City"), ("基隆", "Keelung"),
+    ("桃園", "Taoyuan"), ("新竹", "Hsinchu"), ("苗栗", "Miaoli"),
+    ("臺中", "Taichung"), ("彰化", "Changhua"), ("南投", "Nantou"),
+    ("雲林", "Yunlin"), ("嘉義", "Chiayi"), ("臺南", "Tainan"),
+    ("高雄", "Kaohsiung"), ("屏東", "Pingtung"), ("宜蘭", "Yilan"),
+    ("花蓮", "Hualien"), ("臺東", "Taitung"), ("澎湖", "Penghu"),
+    ("金門", "Kinmen"), ("連江", "Lienchiang"),
+]
+
+_CATEGORIES = [
+    (1, "音樂", "Music"), (2, "戲劇", "Theater"), (3, "舞蹈", "Dance"),
+    (4, "親子", "Family"), (5, "獨立音樂", "Indie Music"), (6, "展覽", "Exhibition"),
+    (7, "講座", "Lecture"), (8, "電影", "Movie"), (11, "綜藝", "Variety Show"),
+    (17, "演唱會", "Concert"), (19, "研習課", "Workshop"), (200, "閱讀", "Reading"),
+]
+
+
+class TaiwanProvider(BaseProvider):
+    code = "tw"
+    name = {"zh": "台灣", "en": "Taiwan"}
+    locations = [{"value": zh, "label": {"zh": zh, "en": en}} for zh, en in _LOCATIONS]
+    categories = [{"value": cid, "label": {"zh": zh, "en": en}} for cid, zh, en in _CATEGORIES]
+
+    def fetch_events(self, category_id: int) -> list[Event]:
+        try:
+            response = requests.get(
+                url=MOC_API_URL,
+                params={"method": "doFindTypeJ", "category": category_id},
+                verify=False,
+                timeout=15,
+            )
+        except requests.RequestException as e:
+            raise UpstreamError(f"MoC API request failed: {e}") from e
+
+        if response.status_code != 200:
+            raise UpstreamError(f"MoC API returned HTTP {response.status_code}")
+
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise UpstreamError(f"MoC API returned non-JSON body: {e}") from e
+
+        # response.json() 只保證是合法 JSON，不保證是陣列。政府 open data 改版包一層
+        # {"data": [...]}、或維護頁回 {"message": "..."} 帶 HTTP 200，都會讓下面的
+        # item 變成 str，item.get(...) 拋 AttributeError。AttributeError 不是
+        # UpstreamError，view 的 except 接不到，使用者拿到 500 而不是設計好的 502，
+        # 而且格式漂移的燈完全沒亮。
+        if not isinstance(payload, list):
+            raise UpstreamError(
+                f"MoC API returned {type(payload).__name__}, expected list"
+            )
+
+        events = []
+        try:
+            for item in payload:
+                title = item.get("title") or "Untitled"
+                for show in item.get("showInfo", []):
+                    event = self._parse_show(title, show)
+                    if event:
+                        events.append(event)
+        except (AttributeError, TypeError) as e:
+            # 陣列裡的元素形狀變了（例如從 dict 變成 str）。同上，要轉成 UpstreamError
+            # 才會走到 502 這條設計好的路徑。
+            raise UpstreamError(f"MoC API item shape changed: {e}") from e
+
+        # 格式漂移的 sanity 訊號（spec §3.4）：MoC 改欄位名時 HTTP 仍是 200、
+        # mock 仍全綠。raw 非空但一筆都 parse 不出來是唯一會亮的燈。
+        if payload and not events:
+            message = (
+                f"MoC returned {len(payload)} raw items but none parsed："
+                "payload format may have changed"
+            )
+            # 先 log 再 raise，順序不可顛倒。spec §3.4 稱這個訊號是「唯一會亮的東西」，
+            # 而直接 raise 不會留下任何一行紀錄，等於那盞燈沒接電。
+            logger.error(message)
+            raise UpstreamError(message)
+        return events
+
+    def _parse_show(self, title: str, show: dict) -> Event | None:
+        try:
+            start_time = datetime.strptime(show["time"], TIME_FORMAT)
+        except (KeyError, TypeError, ValueError):
+            logger.warning(f"Skip show with bad time {show.get('time')!r} ({title})")
+            return None
+        location = show.get("location")
+        if not location:
+            logger.warning(f"Skip show without location ({title})")
+            return None
+        # endTime 與 time 同為 MoC 的 YYYY/MM/DD HH:MM:SS；一併轉 datetime，讓 API 的
+        # startTime/endTime 格式一致 (皆 ISO 8601)。缺漏/格式異常 → None，不讓整筆掉。
+        end_raw = show.get("endTime")
+        end_time = None
+        if end_raw:
+            try:
+                end_time = datetime.strptime(end_raw, TIME_FORMAT)
+            except (TypeError, ValueError):
+                logger.warning(f"Bad endTime {end_raw!r} ({title})")
+        return Event(
+            title=title,
+            start_time=start_time,
+            end_time=end_time,
+            location=location,
+            location_name=show.get("locationName"),
+            on_sales=show.get("onSales"),
+            price=show.get("price"),
+        )
+```
+
+`backend/events/providers/__init__.py`:
+
+```python
+from .base import BaseProvider
+from .taiwan import TaiwanProvider
+
+# 直接寫成字面 dict。對一個單元素 list 做 dict comprehension 只是把
+# 「這裡只有一個 provider」這件事藏起來，加第二個國家時照樣是加一行。
+PROVIDERS: dict[str, BaseProvider] = {"tw": TaiwanProvider()}
+```
+
+- [ ] **Step 4: 把 `events` 加進 `INSTALLED_APPS`**
+
+`backend/config/settings.py` 的 `INSTALLED_APPS` 改成：
+
+```python
+INSTALLED_APPS = [
+    "django.contrib.contenttypes",
+    "django.contrib.staticfiles",
+    "events",
+    "health",
+]
+```
+
+- [ ] **Step 5: 跑測試確認會過**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest events/tests/test_providers.py -v
+```
+
+Expected: 12 PASS。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/events backend/config/settings.py
+git commit -m "feat: add events provider layer with taiwan MoC provider (22 counties, tai-variant folding)"
+```
+
+**本 task 的 local 驗收：** 12 個測試全綠，其中 `test_yilan_and_lienchiang_are_present`
+與 `test_converts_tai_variant` 是這次新補的兩個實測 bug 的守門員。
+
+---
+
+### Task 6: Services layer (cache-aside + 區間重疊過濾 + 排序)
+
+**Files:**
+- Create: `backend/events/services.py`
+- Test: `backend/events/tests/test_services.py`
+
+**Interfaces:**
+- Consumes: `events.providers.PROVIDERS`、`Event`、`UpstreamError`、`normalize_place`（T5）。
+- Produces: `search_events(provider, category_id, location, month) -> tuple[list[Event], dict]`：`month` 是 ISO `YYYY-MM`；回傳 `(matched_events, meta)`，`meta` 是 `{"rawCount": int, "matchedCount": int, "cacheAge": int|None}`；raises `UpstreamError`。常數 `CACHE_TTL_SECONDS = 43200`、`FAILURE_TTL_SECONDS = 60`。T7（API）消費這些。
+- **不產出 `upstream_status()`**（v4 有，v5 移除，理由見本 task 的 code 註解與 spec §3.4）。
+- **`search_events` 收的是 provider 物件不是國家代碼**，這樣 404 的判定完全留在 view 層，services 不需要也不會 raise `KeyError`。
+
+- [ ] **Step 1: 寫失敗的測試**
+
+`backend/events/tests/test_services.py`:
+
+```python
+from datetime import datetime
+from unittest.mock import MagicMock
+
+import pytest
+import responses
+from django.core.cache import cache
+
+from events import services
+from events.providers import PROVIDERS
+from events.providers.base import Event, UpstreamError
+from events.providers.taiwan import MOC_API_URL
+
+
+def make_event(title="演出", start="2026/07/12 19:30:00", end=None, location="臺北市中正區"):
+    fmt = "%Y/%m/%d %H:%M:%S"
+    return Event(
+        title=title,
+        start_time=datetime.strptime(start, fmt),
+        end_time=datetime.strptime(end, fmt) if end else None,
+        location=location, location_name=None,
+        on_sales="Y", price="500",
+    )
+
+
+@pytest.fixture(autouse=True)
+def clear_cache():
+    cache.clear()
+    yield
+    cache.clear()
+
+
+@pytest.fixture
+def fake_provider():
+    provider = MagicMock()
+    provider.code = "tw"
+    provider.fetch_events.return_value = [
+        make_event("七月台北", "2026/07/12 19:30:00", location="臺北市中正區"),
+        make_event("七月台北較早", "2026/07/01 10:00:00", location="臺北市大安區"),
+        make_event("八月台北", "2026/08/03 19:30:00", location="臺北市中正區"),
+        make_event("七月高雄", "2026/07/15 19:30:00", location="高雄市鹽埕區"),
+        make_event("台字異體", "2026/07/20 14:00:00", location="台北市信義區"),
+        make_event("常設展", "2026/01/01 09:00:00", "2026/12/31 18:00:00", "臺北市士林區"),
+    ]
+    return provider
+
+
+def test_filters_by_location_and_iso_month(fake_provider):
+    result, _ = services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    titles = [e.title for e in result]
+    assert titles == ["常設展", "七月台北較早", "七月台北", "台字異體"]  # sorted by start_time
+
+
+def test_tai_variant_row_is_not_dropped(fake_provider):
+    # 實測 MoC 有 11 筆寫「台北市」。字面 substring 比對會靜默丟掉它們。
+    result, _ = services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    assert "台字異體" in [e.title for e in result]
+
+
+def test_event_spanning_months_is_found_in_the_middle(fake_provider):
+    # 實測 MoC category=6 的 439 筆 showInfo 有 386 筆跨月（88%），endTime 一筆都沒缺。
+    # 只比對 start_time 的話展覽這個類別整個查不到。
+    result, _ = services.search_events(fake_provider, 1, location="臺北", month="2026-09")
+    assert [e.title for e in result] == ["常設展"]
+
+
+def test_month_with_no_overlap_returns_empty(fake_provider):
+    result, _ = services.search_events(fake_provider, 1, location="高雄", month="2026-09")
+    assert result == []
+
+
+def test_cache_hit_skips_second_upstream_call(fake_provider):
+    services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    services.search_events(fake_provider, 1, location="高雄", month="2026-07")
+    assert fake_provider.fetch_events.call_count == 1
+
+
+def test_different_category_is_separate_cache_entry(fake_provider):
+    services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    services.search_events(fake_provider, 2, location="臺北", month="2026-07")
+    assert fake_provider.fetch_events.call_count == 2
+
+
+def test_meta_separates_upstream_empty_from_filter_bug(fake_provider):
+    """rawCount 大而 matchedCount 為 0，代表過濾把東西吃掉了，不是上游沒資料。
+
+    這是這個專案唯一分得出這兩件事的方法：fly logs 沒保留期、machine scale-to-zero，
+    半年後收到「查無結果」的回報時，只剩這兩個數字可讀（spec §3.1）。
+    """
+    _, meta = services.search_events(fake_provider, 1, location="高雄", month="2026-09")
+    assert meta["rawCount"] == 6
+    assert meta["matchedCount"] == 0
+    assert meta["cacheAge"] is None  # 第一次是 miss
+
+
+def test_second_call_reports_cache_age(fake_provider):
+    services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    _, meta = services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    assert meta["cacheAge"] is not None
+
+
+def test_upstream_failure_is_cached_so_it_is_not_retried_immediately(fake_provider):
+    """失敗要進 cache，否則上游掛掉期間每個 request 都重打一次 15 秒的上游。
+
+    八個 thread 全停在那裡，正是 --threads 8 要避免的狀況，而且是在上游
+    最虛弱的時候加倍打它（spec §3.3）。
+    """
+    fake_provider.fetch_events.side_effect = UpstreamError("down")
+    with pytest.raises(UpstreamError):
+        services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    with pytest.raises(UpstreamError):
+        services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+    # 第二次直接被冷卻期擋下，沒有再打上游
+    assert fake_provider.fetch_events.call_count == 1
+
+
+def test_failure_cooldown_is_per_category(fake_provider):
+    """一個 category 掛掉不可以連坐其他 category。"""
+    fake_provider.fetch_events.side_effect = UpstreamError("down")
+    with pytest.raises(UpstreamError):
+        services.search_events(fake_provider, 1, location="臺北", month="2026-07")
+
+    fake_provider.fetch_events.side_effect = None
+    result, _ = services.search_events(fake_provider, 2, location="臺北", month="2026-07")
+    assert [e.title for e in result] == ["常設展", "七月台北較早", "七月台北", "台字異體"]
+
+
+MOC_PAYLOAD = [{
+    "title": "端到端音樂會",
+    "showInfo": [{
+        "location": "臺北市中正區中山南路21-1號",
+        "time": "2026/07/12 19:30:00",
+        "endTime": "2026/07/12 21:30:00",
+        "locationName": "國家音樂廳",
+        "onSales": "Y",
+        "price": "500",
+    }],
+}]
+
+
+@responses.activate
+def test_end_to_end_from_moc_string_to_iso_month_filter():
+    """不 mock provider：走真的 TaiwanProvider，從 MoC 的 "2026/07/12 19:30:00"
+    字串一路走到 ISO month="2026-07" 的過濾結果。
+
+    沒有這條測試的話，月份格式轉換的兩端各自被 mock 掉（services 測試餵已 parse 好的
+    datetime、provider 測試只驗 parse 不驗過濾），沒有任何一條測試涵蓋整段（spec §8）。
+    """
+    responses.get(MOC_API_URL, json=MOC_PAYLOAD)
+    result, _ = services.search_events(PROVIDERS["tw"], 1, location="臺北", month="2026-07")
+    assert [e.title for e in result] == ["端到端音樂會"]
+
+
+@responses.activate
+def test_non_list_payload_becomes_upstream_error_not_attribute_error():
+    """政府 API 改版包一層 {"data": [...]} 時，必須是 502 不是 500。
+
+    不擋的話 item 會是 str、item.get 拋 AttributeError，view 的
+    except UpstreamError 接不到，使用者拿到 Django 的 500 HTML（spec §3.2）。
+    """
+    responses.get(MOC_API_URL, json={"data": MOC_PAYLOAD})
+    with pytest.raises(UpstreamError):
+        services.search_events(PROVIDERS["tw"], 1, location="臺北", month="2026-07")
+```
+
+- [ ] **Step 2: 跑測試確認會失敗**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest events/tests/test_services.py -v
+```
+
+Expected: FAIL：import error（`events.services` 尚不存在）。
+
+- [ ] **Step 3: 實作**
+
+`backend/events/services.py`:
+
+```python
+import time
+from calendar import monthrange
+from datetime import datetime
+
+from django.core.cache import cache
+from toolkitsy.logger import logger
+
+from .providers.base import BaseProvider, Event, UpstreamError, normalize_place
+
+CACHE_TTL_SECONDS = 60 * 60 * 12  # 12h：event data changes slowly (spec §3.3)
+# 失敗也要進 cache。只在成功時寫 cache 的話，上游持續失敗期間每一個 request 都會
+# 重打一次 15 秒的上游，八個 thread 全停在那裡，正是 --threads 8 要避免的狀況，
+# 而且是在上游最虛弱的時候加倍打它。60 秒夠短，上游恢復後最多一分鐘就重試（spec §3.3）。
+FAILURE_TTL_SECONDS = 60
+
+
+def _month_bounds(month: str) -> tuple[datetime, datetime]:
+    """'2026-07' -> (2026-07-01 00:00:00, 2026-07-31 23:59:59)."""
+    start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
+    last_day = monthrange(start.year, start.month)[1]
+    end = start.replace(day=last_day, hour=23, minute=59, second=59)
+    return start, end
+
+
+def _matches(event: Event, location: str, start: datetime, end: datetime) -> bool:
+    if normalize_place(location) not in normalize_place(event.location):
+        return False
+    # 區間重疊，不是比對開始月份。實測 88% 的展覽跨月，只比 start_time 會讓
+    # 一檔 1 月開跑、12 月結束的常設展在 2 月到 12 月全部查不到（spec §3.3）。
+    event_end = event.end_time or event.start_time
+    return event.start_time <= end and event_end >= start
+
+
+def search_events(
+    provider: BaseProvider, category_id: int, location: str, month: str
+) -> tuple[list[Event], dict]:
+    """month is ISO 'YYYY-MM' (API contract). Raises UpstreamError when the source is down.
+
+    收 provider 物件而不是國家代碼：404 的判定完全留在 view 層，這裡不 raise KeyError。
+    回傳 (符合條件的活動, meta)。meta 是這個專案唯一的事後診斷手段（spec §3.1）：
+    fly logs 沒有保留期、machine 又 scale-to-zero，半年後「查無結果」的回報進來時
+    沒有任何 log 可讀，只剩這三個數字分得出是上游沒資料還是自己的過濾壞了。
+    """
+    cache_key = f"events:{provider.code}:{category_id}"
+    failure_key = f"{cache_key}:failed"
+
+    # 上一次失敗還在冷卻期內就直接拒絕，不要再打上游一次。
+    last_failure = cache.get(failure_key)
+    if last_failure is not None:
+        logger.info(f"Cache hit (negative): {cache_key}")
+        raise UpstreamError(f"upstream failed recently: {last_failure}")
+
+    cached = cache.get(cache_key)
+    if cached is None:
+        # 這一行 log 讓 cache 這一層可以在本機被驗：同一個查詢跑兩次，
+        # 第一次 miss、第二次 hit。沒有它的話 cache-aside 只被 MagicMock 驗過，
+        # 而且 prod 上只能靠回應時間去猜（spec §8）。
+        logger.info(f"Cache miss: {cache_key}")
+        try:
+            events = provider.fetch_events(category_id)
+        except UpstreamError as e:
+            cache.set(failure_key, str(e), FAILURE_TTL_SECONDS)
+            raise
+        cache.set(cache_key, (events, int(time.time())), CACHE_TTL_SECONDS)
+        cache_age = None
+    else:
+        events, stored_at = cached
+        cache_age = int(time.time()) - stored_at
+        logger.info(f"Cache hit: {cache_key} (age={cache_age}s)")
+
+    start, end = _month_bounds(month)
+    matched = sorted(
+        (e for e in events if _matches(e, location, start, end)),
+        key=lambda e: e.start_time,
+    )
+    meta = {
+        "rawCount": len(events),
+        "matchedCount": len(matched),
+        "cacheAge": cache_age,
+    }
+    return matched, meta
+```
+
+**沒有 `upstream_status()`，也沒有 `/health/upstream`。** v4 的設計是失敗時寫一個
+cache 旗標、開一個 endpoint 讀它、監控指向那個 endpoint。這條鏈路的前提不成立，
+三個理由任一個都足以讓它永遠回綠燈（spec §3.4）：旗標只在 cache **miss** 的路徑上
+被寫，所以沒人搜尋的時段 MoC 掛掉不留痕跡；旗標放在 LocMemCache 而 machine 是
+scale-to-zero，機器一停就消失；監控讀的是唯讀 cache view，整條鏈路沒有任何一段
+真的碰到上游。取代方案是讓 uptime 監控直接打一個真實的搜尋 URL（T16 Step 8）。
+
+- [ ] **Step 4: 跑測試確認會過**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest events/tests/test_services.py -v
+```
+
+Expected: 8 PASS。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/events/services.py backend/events/tests/test_services.py
+git commit -m "feat: add events service layer with cache-aside, interval month filter, upstream flag"
+```
+
+**本 task 的 local 驗收：** 8 個測試全綠。特別確認
+`test_event_spanning_months_is_found_in_the_middle` 是綠的，那條擋的是 88% 的展覽資料。
+
+---
+
+### Task 7: API endpoints + wiring ★ checkpoint
+
+**Files:**
+- Create: `backend/events/views.py`、`backend/events/urls.py`、`backend/events/middleware.py`
+- Modify: `backend/config/urls.py`、`backend/config/settings.py`、`backend/health/urls.py`、`backend/health/views.py`、`backend/health/tests.py`
+- Test: `backend/events/tests/test_api.py`
+
+**Interfaces:**
+- Consumes: `services.search_events`（T6）、`PROVIDERS`、`normalize_place`（T5）。
+- Produces: `GET /api/v1/countries` → `[{code, name, locations, categories}]`；`GET /api/v1/<country>/events?category=&location=&month=` → `{"events": [{title, startTime, endTime, location, locationName, onSales, price, googleMapUrl, googleSearchUrl}], "meta": {rawCount, matchedCount, cacheAge}}`，`startTime`/`endTime` 為 ISO 8601；錯誤格式 `{"error": {"code": "...", "message": "..."}}`。前端（T8）消費這組精確欄位，`meta` 除外（前端不顯示它）。
+
+- [ ] **Step 1: 寫失敗的測試**
+
+`backend/events/tests/test_api.py`:
+
+```python
+import json
+from datetime import datetime
+from unittest.mock import patch
+
+from events.providers.base import Event, UpstreamError
+
+
+def _fake_events():
+    return [Event(
+        title="模擬音樂會", start_time=datetime(2026, 7, 12, 19, 30),
+        end_time=datetime(2026, 7, 12, 21, 30), location="臺北市中正區中山南路21-1號",
+        location_name="國家音樂廳", on_sales="Y", price="500",
+    )]
+
+
+class TestCountriesApi:
+    def test_returns_taiwan(self, client):
+        resp = client.get("/api/v1/countries")
+        assert resp.status_code == 200
+        data = json.loads(resp.content)
+        assert data[0]["code"] == "tw"
+        assert data[0]["name"]["en"] == "Taiwan"
+        assert len(data[0]["locations"]) == 20
+        assert len(data[0]["categories"]) == 12
+
+
+class TestEventsApi:
+    URL = "/api/v1/tw/events"
+    OK_PARAMS = {"category": "1", "location": "臺北", "month": "2026-07"}
+
+    @patch("events.views.services.search_events", return_value=_fake_events())
+    def test_success_shape(self, _mock, client):
+        resp = client.get(self.URL, self.OK_PARAMS)
+        assert resp.status_code == 200
+        event = json.loads(resp.content)["events"][0]
+        assert event["title"] == "模擬音樂會"
+        assert event["startTime"] == "2026-07-12T19:30:00"
+        assert "query=" in event["googleMapUrl"]
+        assert "q=" in event["googleSearchUrl"]
+
+    @patch("events.views.services.search_events", return_value=[])
+    def test_empty_result_is_200_with_empty_list(self, _mock, client):
+        resp = client.get(self.URL, self.OK_PARAMS)
+        assert resp.status_code == 200
+        assert json.loads(resp.content) == {"events": []}
+
+    def test_non_numeric_category_400(self, client):
+        resp = client.get(self.URL, {**self.OK_PARAMS, "category": "abc"})
+        assert resp.status_code == 400
+        assert json.loads(resp.content)["error"]["code"] == "INVALID_PARAM"
+
+    def test_category_outside_whitelist_400(self, client):
+        # isdigit() 不夠：category=999999 會實際打上游並佔用一個 cache entry，
+        # 連續丟不同 category 可以把 LocMemCache 預設的 300 個 entry 上限洗掉。
+        resp = client.get(self.URL, {**self.OK_PARAMS, "category": "999999"})
+        assert resp.status_code == 400
+        assert json.loads(resp.content)["error"]["code"] == "INVALID_PARAM"
+
+    def test_location_outside_whitelist_400(self, client):
+        resp = client.get(self.URL, {**self.OK_PARAMS, "location": "東京"})
+        assert resp.status_code == 400
+
+    def test_bad_month_400(self, client):
+        resp = client.get(self.URL, {**self.OK_PARAMS, "month": "2026/07"})
+        assert resp.status_code == 400
+
+    def test_unknown_country_404(self, client):
+        resp = client.get("/api/v1/xx/events", self.OK_PARAMS)
+        assert resp.status_code == 404
+        assert json.loads(resp.content)["error"]["code"] == "UNKNOWN_COUNTRY"
+
+    @patch("events.views.services.search_events", side_effect=UpstreamError("down"))
+    def test_upstream_failure_502(self, _mock, client):
+        resp = client.get(self.URL, self.OK_PARAMS)
+        assert resp.status_code == 502
+        assert json.loads(resp.content)["error"]["code"] == "UPSTREAM_ERROR"
+
+    def test_response_has_request_id_header(self, client):
+        resp = client.get("/api/v1/countries")
+        assert resp.headers.get("X-Request-ID")
+```
+
+`backend/health/tests.py`（整份取代：加上 upstream endpoint 的測試）:
+
+```python
+import json
+
+def test_health(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert json.loads(resp.content) == {"status": "ok"}
+```
+
+（v4 這裡還有兩個 `/health/upstream` 的測試。v5 移除了那個 endpoint，
+理由見 T6 的說明與 spec §3.4：它讀的旗標在 scale-to-zero 下必然消失，
+而且只有真人搜尋才會被寫，所以它永遠回綠燈。）
+
+- [ ] **Step 2: 跑測試確認會失敗**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest events/tests/test_api.py health/tests.py -v
+```
+
+Expected: FAIL：404（路由尚未接上）/ import error。
+
+- [ ] **Step 3: 實作 views / urls / middleware**
+
+`backend/events/views.py`:
+
+```python
+import re
+from urllib.parse import quote_plus
+
+from django.http import JsonResponse
+from toolkitsy.logger import logger
+
+from . import services
+from .providers import PROVIDERS
+from .providers.base import Event, UpstreamError, normalize_place
+
+# 年份收斂成 19xx/20xx。用 \d{4} 的話 0000-01 會通過驗證，然後死在
+# strptime 的 "year 0 is out of range"，回 Django 500 HTML 而不是合約的 400 JSON。
+MONTH_PATTERN = re.compile(r"^(19|20)\d{2}-(0[1-9]|1[0-2])$")
+
+
+def _error(status: int, code: str, message: str) -> JsonResponse:
+    return JsonResponse({"error": {"code": code, "message": message}}, status=status)
+
+
+def _event_to_json(event: Event) -> dict:
+    return {
+        "title": event.title,
+        "startTime": event.start_time.isoformat(),
+        "endTime": event.end_time.isoformat() if event.end_time else None,
+        "location": event.location,
+        "locationName": event.location_name,
+        "onSales": event.on_sales,
+        "price": event.price,
+        "googleMapUrl": f"https://www.google.com/maps/search/?api=1&query={quote_plus(event.location)}",
+        "googleSearchUrl": f"https://www.google.com/search?q={quote_plus(event.title)}",
+    }
+
+
+def countries(request):
+    data = [
+        {"code": p.code, "name": p.name, "locations": p.locations, "categories": p.categories}
+        for p in PROVIDERS.values()
+    ]
+    return JsonResponse(data, safe=False)
+
+
+def events(request, country: str):
+    # 404 在這裡判，不靠 except KeyError 包住整個 service 呼叫： 那樣的話
+    # 內部任何深層 KeyError 都會變成假的「不支援這個國家」（spec §3.1）。
+    provider = PROVIDERS.get(country)
+    if provider is None:
+        return _error(404, "UNKNOWN_COUNTRY", f"country '{country}' is not supported")
+
+    category = request.GET.get("category", "")
+    location = request.GET.get("location", "")
+    month = request.GET.get("month", "")
+
+    # isascii() 不可省。str.isdigit() 對上標數字回 True（'²'.isdigit() 是 True），
+    # 而 int('²') 拋 ValueError。少了它，?category=² 會通過守衛、死在下一行的
+    # int()，回 Django 500 HTML 而不是合約承諾的 400 JSON（spec §3.1）。
+    if not (category.isascii() and category.isdigit()):
+        return _error(400, "INVALID_PARAM", "category must be an integer")
+    # 白名單比對。只擋非數字是不夠的（spec §3.1）。
+    if int(category) not in {c["value"] for c in provider.categories}:
+        return _error(400, "INVALID_PARAM", f"category '{category}' is not available for '{country}'")
+    # 白名單比對前先正規化，與過濾階段用同一個函式。拿原值去查集合的話，
+    # location=台北 這個書籤會拿到 400，而它的過濾邏輯本來會命中（spec §3.1）。
+    known_locations = {normalize_place(loc["value"]) for loc in provider.locations}
+    if normalize_place(location) not in known_locations:
+        return _error(400, "INVALID_PARAM", f"location '{location}' is not available for '{country}'")
+    if not MONTH_PATTERN.match(month):
+        return _error(400, "INVALID_PARAM", "month must be YYYY-MM")
+
+    try:
+        result, meta = services.search_events(provider, int(category), location, month)
+    except UpstreamError as e:
+        logger.error(f"Upstream failure: {e}")
+        return _error(502, "UPSTREAM_ERROR", "Data source is temporarily unavailable")
+
+    logger.info(
+        f"Search {country}/{category}/{location}/{month}: "
+        f"raw={meta['rawCount']} matched={meta['matchedCount']} cacheAge={meta['cacheAge']}"
+    )
+    # meta 一起回。前端不顯示它，但這是 owner 半年後唯一能用 curl 分辨
+    # 「上游沒資料」與「我的過濾壞了」的東西（spec §3.1）。
+    return JsonResponse({"events": [_event_to_json(e) for e in result], "meta": meta})
+```
+
+`backend/events/urls.py`:
+
+```python
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("countries", views.countries, name="api_countries"),
+    path("<str:country>/events", views.events, name="api_events"),
+]
+```
+
+`backend/events/middleware.py`:
+
+> **裝這個 middleware 之前先跑這一行**（spec §3.4）：
+>
+> ```bash
+> cd backend && DEBUG=True uv run python -c \
+>   "import inspect, toolkitsy.logger as L; print(inspect.getsource(L.set_correlation_id))"
+> ```
+>
+> 要看到 `ContextVar` 或 `threading.local()`。若它用的是 module global，
+> 在 `--threads 8` 之下八個 request 共用一個 process，log 會互相錯掛，
+> **而錯掛的 id 比沒有 id 更糟**：它看起來像可信的追查線索。
+> 確認不了就不要裝這個 middleware，直接跳到下一個檔案。
+
+```python
+import uuid
+
+from toolkitsy.logger import set_correlation_id
+
+
+class CorrelationIdMiddleware:
+    """Give every request a short correlation id; toolkitsy logs include it.
+
+    已知限制（spec §3.4）：machine 是 scale-to-zero、fly logs 只有即時串流，
+    事後拿到這個 id 也還原不了當時的 log。README 有寫明這一點。
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        correlation_id = uuid.uuid4().hex[:8]
+        set_correlation_id(correlation_id)
+        response = self.get_response(request)
+        response["X-Request-ID"] = correlation_id
+        return response
+```
+
+`backend/health/views.py`（整份取代）:
+
+```python
+from django.http import JsonResponse
+
+
+def health(request):
+    """Liveness only：deliberately touches no external dependency.
+
+    上游（MoC）掛掉時這裡照樣回 200，所以它只夠給 Fly 的 health check 用。
+    真正的上游監控是 uptime 服務去打一個真實的搜尋 URL（spec §3.4、T16 Step 8）。
+    """
+    return JsonResponse({"status": "ok"})
+```
+
+`backend/health/urls.py`（整份取代）:
+
+```python
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("", views.health, name="health"),
+]
+```
+
+`backend/config/urls.py`（整份取代）:
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path("health", include("health.urls")),
+    path("api/v1/", include("events.urls")),
+]
+```
+
+- [ ] **Step 4: 把 middleware 加進 settings**
+
+`backend/config/settings.py` 的 `MIDDLEWARE` 改成：
+
+```python
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "events.middleware.CorrelationIdMiddleware",
+]
+```
+
+- [ ] **Step 5: 跑完整後端測試**
+
+```bash
+cd backend && DEBUG=True uv run python -m pytest . -v
+```
+
+Expected: 全部 PASS（providers 12 + services 8 + api 9 + health 3 = 32）。
+
+- [ ] **★ Step 6: checkpoint：打真實 MoC，量資料大小，確認 contract**
+
+> **這個 checkpoint 的通過條件刻意不接受空陣列。** 月份過濾壞掉時 API 永遠回空，
+> 與「這個月剛好沒活動」在 checkpoint 上長得一模一樣（spec §8.1）。
+> 所以先直接打上游確認哪個 category 有資料，再對該組合斷言筆數大於 0。
+
+先確認上游現在有什麼，並順手量資料量（spec §10 要求把數字寫回文件）：
+
+```bash
+curl -sk "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do?method=doFindTypeJ&category=6" -o /tmp/moc6.json
+wc -c /tmp/moc6.json
+python3 -c "
+import json
+d = json.load(open('/tmp/moc6.json'))
+shows = [s for item in d for s in item.get('showInfo', [])]
+print('items:', len(d), 'showInfo:', len(shows))
+months = sorted({s['time'][:7] for s in shows if s.get('time')})
+print('months present:', months[:12])
+print('spanning:', sum(1 for s in shows if s.get('endTime') and s['endTime'][:7] != s.get('time','')[:7]))
+"
+```
+
+從輸出的 `months present` 裡挑一個**確定有資料的月份**，記成 `HAVE_MONTH`（例如 `2026-09`）。
+把 `wc -c` 與 `showInfo` 的數字補進 spec §10 的「單 category 的資料量未量測」那一條。
+
+起 server 驗證三件事：
+
+```bash
+cd backend && DEBUG=True uv run python manage.py runserver 8000 &
+sleep 3
+
+# 1. countries 回傳形狀正確（20 locations、12 categories）
+curl -s "http://127.0.0.1:8000/api/v1/countries" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d[0]['locations'])==20, len(d[0]['locations']); assert len(d[0]['categories'])==12; print('countries OK')"
+
+# 2. events 端點打真實 MoC，該月份必須有資料（空陣列一律算沒過）
+HAVE_MONTH=2026-09   # ← 換成上面挑出來的那個月份
+curl -s "http://127.0.0.1:8000/api/v1/tw/events?category=6&location=%E8%87%BA%E5%8C%97&month=${HAVE_MONTH}" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'events' in d, d; n=len(d['events']); assert n>0, f'FAIL: 0 events：月份過濾可能壞了'; print('events OK', n, 'items')"
+
+# 3. 錯誤格式正確
+curl -s -o /tmp/e1.json -w "%{http_code}\n" "http://127.0.0.1:8000/api/v1/xx/events?category=1&location=%E8%87%BA%E5%8C%97&month=2026-07"; cat /tmp/e1.json; echo
+curl -s -o /tmp/e2.json -w "%{http_code}\n" "http://127.0.0.1:8000/api/v1/tw/events?category=999999&location=%E8%87%BA%E5%8C%97&month=2026-07"; cat /tmp/e2.json; echo
+
+# 3b. 兩個「驗證通過但轉型爆炸」的洞：兩個都必須回 400 JSON，不可以是 500 HTML
+curl -s -o /dev/null -w "superscript category: %{http_code}\n" "http://127.0.0.1:8000/api/v1/tw/events?category=%C2%B2&location=%E8%87%BA%E5%8C%97&month=2026-07"
+curl -s -o /dev/null -w "year zero: %{http_code}\n" "http://127.0.0.1:8000/api/v1/tw/events?category=1&location=%E8%87%BA%E5%8C%97&month=0000-01"
+
+# 3c. 台/臺 異體字書籤不可以拿到 400
+curl -s -o /dev/null -w "tai variant: %{http_code}\n" "http://127.0.0.1:8000/api/v1/tw/events?category=1&location=%E5%8F%B0%E5%8C%97&month=2026-07"
+
+# 4. meta 三個欄位都在，而且 rawCount 大於 matchedCount（有東西被過濾掉才合理）
+curl -s "http://127.0.0.1:8000/api/v1/tw/events?category=1&location=%E8%87%BA%E5%8C%97&month=2026-07" \
+  | python3 -c "import json,sys; m=json.load(sys.stdin)['meta']; print(m); assert m['rawCount'] >= m['matchedCount']; assert m['cacheAge'] is not None, 'FAIL: 第二次呼叫應該是 cache hit'"
+
+kill %1
+```
+
+Expected：`countries OK`；`events OK N items` 且 **N 大於 0**；第一個 curl 回 `404` 且 body 含 `UNKNOWN_COUNTRY`；第二個回 `400` 且含 `INVALID_PARAM`；`superscript category`、`year zero` 都是 `400`（若是 `500` 代表 `isascii()` 或 month regex 漏了）；`tai variant` 是 `200`；meta 那行印出三個數字且不 assert 失敗。
+
+**全部符合才算 checkpoint 通過。** 若第 2 項是 0 筆，回 T6 檢查 `_matches` 的區間判斷，不要放行。
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend
+git commit -m "feat: add /api/v1 endpoints with whitelist validation, upstream health endpoint"
+```
+
+**本 task 的 local 驗收：** 32 個測試全綠，加上 Step 6 的四項 curl 全部符合。
+這是進前端之前的最後一道關卡。
+
+**Phase 2 結束狀態：** API 回得出真實資料，跨月與異體字都在測試與真實資料上驗過。
+
+---
+## Phase 3：前端
 
 ### Task 8: Types, API client, format utils (TDD)
 
@@ -1767,7 +1975,7 @@ git commit -m "feat: scaffold vite react-ts frontend with tailwind, vitest, dev 
 - Test: `frontend/src/utils/format.test.ts`、`frontend/src/utils/search.test.ts`、`frontend/src/api.test.ts`
 
 **Interfaces:**
-- Consumes: backend API 形狀（T6 給的精確欄位名）。
+- Consumes: backend API 形狀（T7 給的精確欄位名）。
 - Produces: `fetchCountries(signal?): Promise<Country[]>`；`fetchEvents(country, params, signal?): Promise<{events: EventItem[]}>`；`ApiError` 帶 `.status`；`formatEventTime(iso)`；`currentMonth(now?)`；`withYear(month, year)`；`withMonth(month, mm)`；`resetForCountry(value, country)`。T10 / T11 消費這些。
 
 - [ ] **Step 1: 寫失敗的測試**
@@ -1977,6 +2185,42 @@ export function formatEventTime(iso: string): string {
   return `${month}/${day} ${hour}:${minute}`;
 }
 
+/** 顯示活動的時間「區間」，不是只有開始時間。
+ *
+ * 後端整節在打區間重疊比對的仗，endTime 也一路傳到這裡，卡片只顯示 startTime
+ * 等於把區間丟掉。實測展覽有 88% 跨月，使用者查九月會看到每一張卡都寫「01/01」，
+ * 合理判斷這個站的資料是舊的（spec §4）。
+ *
+ * 同月：07/12 19:30 – 07/14
+ * 跨月：2026/01/01 – 2026/12/31（跨月時補上年份，不然 01/01 – 12/31 看不出是哪年）
+ * 無 endTime：只顯示開始時間
+ */
+export function formatEventRange(startIso: string, endIso: string | null): string {
+  const start = formatEventTime(startIso);
+  if (!endIso) return start;
+
+  const startYm = startIso.slice(0, 7);
+  const endYm = endIso.slice(0, 7);
+  if (startYm === endYm) {
+    // 同月：結束只給日期，時間省略（多數活動每天的結束時間相同，重複沒有資訊量）
+    return `${start} – ${endIso.slice(8, 10) === startIso.slice(8, 10) ? endIso.slice(11, 16) : endIso.slice(5, 10).replace("-", "/")}`;
+  }
+  return `${startIso.slice(0, 10).replace(/-/g, "/")} – ${endIso.slice(0, 10).replace(/-/g, "/")}`;
+}
+
+/** 票價是 MoC 的自由文字欄位，不可以無條件前綴 $。
+ *
+ * 實測會出現「洽詢主辦單位」「0」「免費」。直接寫 `$ {price}` 會產出
+ * 「$ 洽詢主辦單位」與「$ 0」（spec §4）。回傳 null 代表這一格不要渲染。
+ */
+export function formatPrice(price: string | null, freeLabel: string): string | null {
+  if (!price) return null;
+  const trimmed = price.trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return trimmed;        // 自由文字，原樣顯示不加前綴
+  return Number(trimmed) === 0 ? freeLabel : `$ ${trimmed}`;
+}
+
 /** "YYYY-MM" in LOCAL time.
  *
  * 不可以用 new Date().toISOString().slice(0, 7)： 那是 UTC，台灣時間每月 1 號
@@ -2061,17 +2305,20 @@ git commit -m "feat: add typed api client, local-time month util, search form pu
   "search.month": "月份",
   "search.year": "年份",
   "search.submit": "搜尋",
+  "search.reset": "重設條件",
   "search.comingSoon": "即將推出",
+  "search.slow": "第一次查詢比較慢，正在向文化部要資料",
   "results.idleTitle": "選好條件後按搜尋",
   "results.idleHint": "挑一個地區、類別與月份，看看最近有什麼可以去",
   "results.emptyTitle": "找不到符合條件的活動",
-  "results.emptyHint": "試試看更換地區、類別或月份，或者清除篩選條件重新搜尋",
+  "results.emptyHint": "試試看更換地區、類別或月份，或按搜尋卡上的「重設條件」從頭來過",
   "results.count": "筆活動",
   "error.title": "資料讀取失敗",
   "error.retry": "重新整理",
   "error.upstream": "資料來源暫時無法使用，請稍後再試",
   "error.generic": "發生錯誤，請稍後再試",
   "event.onSales": "熱賣中",
+  "event.free": "免費",
   "event.search": "Google 搜尋此活動",
   "event.map": "地圖",
   "about.title": "關於這個網站",
@@ -2094,17 +2341,20 @@ git commit -m "feat: add typed api client, local-time month util, search form pu
   "search.month": "Month",
   "search.year": "Year",
   "search.submit": "Search",
+  "search.reset": "Reset filters",
   "search.comingSoon": "Coming soon",
+  "search.slow": "First search takes a while. Fetching from the Ministry of Culture.",
   "results.idleTitle": "Pick your filters, then search",
   "results.idleHint": "Choose a location, category and month to see what is on",
   "results.emptyTitle": "No events match these filters",
-  "results.emptyHint": "Try another location, category or month, or clear filters and search again",
+  "results.emptyHint": "Try another location, category or month, or use Reset filters on the search card",
   "results.count": "events",
   "error.title": "Failed to load events",
   "error.retry": "Retry",
   "error.upstream": "Data source is temporarily unavailable. Please try again later.",
   "error.generic": "Something went wrong. Please try again later.",
   "event.onSales": "On sale",
+  "event.free": "Free",
   "event.search": "Search on Google",
   "event.map": "Map",
   "about.title": "About this site",
@@ -2129,12 +2379,31 @@ const LangContext = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({
   setLang: () => {},
 });
 
+const LANG_KEY = "cef-lang";
+
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>("zh");
+  // 語言要持久化，做法與主題完全一樣。v4 只持久化了主題，lang 是裸的 useState("zh")：
+  // 看英文的朋友每次進站都要重切一次，而且他不會知道這個站記得住主題卻記不住語言（spec §4）。
+  const [lang, setLang] = useState<Lang>(() => {
+    try {
+      const saved = localStorage.getItem(LANG_KEY);
+      if (saved === "zh" || saved === "en") return saved;
+    } catch {
+      // Safari 無痕模式會讓 localStorage 直接 throw。讀不到就照預設走，不要讓整頁掛掉。
+    }
+    return navigator.language.startsWith("en") ? "en" : "zh";
+  });
+
   useEffect(() => {
     // 不設的話螢幕閱讀器會用錯發音字典，瀏覽器翻譯也會誤判（spec §4）
     document.documentElement.lang = HTML_LANG[lang];
+    try {
+      localStorage.setItem(LANG_KEY, lang);
+    } catch {
+      // 同上：寫不進去就算了，這一輪的切換仍然有效
+    }
   }, [lang]);
+
   return <LangContext.Provider value={{ lang, setLang }}>{children}</LangContext.Provider>;
 }
 
@@ -2155,16 +2424,18 @@ export function pickLabel(label: Record<string, string>, lang: Lang): string {
 - [ ] **Step 3: `frontend/src/components/LanguageSwitch.tsx`**
 
 ```tsx
-import { useLang, useT } from "../i18n";
+import { useLang } from "../i18n";
 
 export default function LanguageSwitch({ small = false }: { small?: boolean }) {
   const { lang, setLang } = useLang();
-  const t = useT();
   const next = lang === "zh" ? "en" : "zh";
   return (
     <button
       type="button"
-      aria-label={t("nav.language")}
+      // 刻意沒有 aria-label。純 icon 的按鈕（主題、搜尋、關於）必須補，
+      // 但這一顆看得到的字是 EN 或 中，再掛一個「切換語言」的 label 會讓
+      // 可見文字與 accessible name 毫無交集，語音控制使用者說「click EN」點不到
+      // （WCAG 2.5.3 Label in Name）。有可見文字時就讓文字當 accessible name（spec §4.3）。
       onClick={() => setLang(next)}
       className={`rail-btn ${small ? "h-9 w-9" : "h-11 w-11"} rounded-full flex items-center justify-center text-xs font-semibold transition hover:bg-[var(--surface-2)]`}
     >
@@ -2177,30 +2448,97 @@ export default function LanguageSwitch({ small = false }: { small?: boolean }) {
 `small` prop 是給手機頂部 bar 用的。手機 bar 必須放得下語言切換，否則整個 i18n
 在手機上等於不存在（spec §4）。
 
-- [ ] **Step 4: 型別檢查與 commit**
+- [ ] **Step 4: 寫三個 Vitest 斷言**
 
-```bash
-cd frontend && npx tsc --noEmit
-git add frontend/src && git commit -m "feat: add zh/en i18n context, html lang sync, language switch"
+`frontend/src/i18n.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { pickLabel } from "./i18n";
+import zh from "./locales/zh.json";
+import en from "./locales/en.json";
+
+describe("i18n", () => {
+  it("兩份字典的 key 完全一致", () => {
+    // 少一個 key 的症狀是畫面上出現原始 key 字串（例如 results.emptyHint），
+    // 而那只會在切到該語言時才看得到。這裡一次比對整組。
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+  });
+
+  it("pickLabel 在 en 下拿英文，缺英文時退回中文", () => {
+    expect(pickLabel({ zh: "臺北", en: "Taipei" }, "en")).toBe("Taipei");
+    expect(pickLabel({ zh: "臺北" }, "en")).toBe("臺北");
+  });
+});
 ```
 
-Expected: tsc 乾淨無錯。這一步會用到 T7 加的 `resolveJsonModule`；若這裡報
-`Cannot find module './locales/zh.json'`，回 T7 Step 3。
+`frontend/src/i18n.dom.test.tsx`（需要 `npm i -D jsdom` 並在 `vite.config.ts`
+的 `test` 區塊設 `environment: "jsdom"`）:
+
+```tsx
+import { render, fireEvent } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import { LanguageProvider } from "./i18n";
+import LanguageSwitch from "./components/LanguageSwitch";
+
+describe("LanguageSwitch", () => {
+  it("切換後 <html lang> 跟著變", () => {
+    const { getByText } = render(
+      <LanguageProvider><LanguageSwitch /></LanguageProvider>,
+    );
+    expect(document.documentElement.lang).toBe("zh-Hant");
+    fireEvent.click(getByText("EN"));
+    expect(document.documentElement.lang).toBe("en");
+  });
+});
+```
+
+> **這一步取代 v4 的驗收方式。** v4 這個 task 的驗收只有 `npx tsc --noEmit`，
+> 而「無輸出」證明的只是型別對：不證明缺 key 有 fallback、不證明語言挑對、
+> 不證明切換鈕會 render。這是整份 plan 唯一一個看不到任何結果的 task（spec §8）。
+>
+> 若不想為了一個 DOM 測試裝 jsdom 與 testing-library，第二個檔案可以省略，
+> 改成在 T11 的手動 E2E 清單裡確認 `<html lang>`。但**第一個檔案不可省**，
+> 它零新依賴而且擋掉最常見的 i18n bug。
+
+- [ ] **Step 5: 跑測試與 commit**
+
+```bash
+cd frontend && npx tsc --noEmit && npm test
+git add frontend/src && git commit -m "feat: add zh/en i18n context, html lang sync, persisted language"
+```
+
+Expected: tsc 乾淨，vitest 綠燈。
+
+Expected: tsc 乾淨無錯。這一步會用到 T4 加的 `resolveJsonModule`；若這裡報
+`Cannot find module './locales/zh.json'`，回 T4 Step 3。
 
 **本 task 的 local 驗收：** `npx tsc --noEmit` 乾淨。
 
 ---
 
-### Task 10: UI 元件 + glass design system ★ checkpoint
+> **T10 拆成三段（v5 的改動）。** v4 是一個 880 行的 task，做完九個元件才第一次
+> 看到畫面。拆成 10a / 10b / 10c 之後每一段結束都能開瀏覽器看到那一段做出來的東西，
+> 而 fixture 頁面的機制本來就有，只是從跑一次變成跑三次。
+> 三段的 **Files** 與 **Interfaces** 合起來就是下面這一份。
 
-**Files:**
+### Task 10a: design system + 狀態元件 ★ checkpoint
+
+做完這一段你會看到：骨架動畫、idle/空結果畫面、錯誤畫面，三種狀態的真實外觀。
+
+**Files（10a、10b、10c 全部）:**
 - Create: `frontend/src/design.css`
 - Modify: `frontend/src/index.css`（加一行 import）
 - Create under `frontend/src/components/`: `Icon.tsx`、`SkeletonCard.tsx`、`ErrorMessage.tsx`、`EmptyState.tsx`、`EventCard.tsx`、`EventList.tsx`、`SearchForm.tsx`
 
+**10a 這一段只碰**：`design.css`、`index.css`、`Icon.tsx`、`SkeletonCard.tsx`、`EmptyState.tsx`、`ErrorMessage.tsx`
+
 **Interfaces:**
-- Consumes: `EventItem`、`Country`、`SearchValue`（T8）；`useT`、`useLang`、`pickLabel`（T9）；`formatEventTime`、`withYear`、`withMonth`、`resetForCountry`（T8）。
-- Produces: `<SearchForm countries value onChange onSubmit loading />`（`onSubmit(next?: SearchValue)`）；`<EventList events summary />`；`<EmptyState title hint />`；`<ErrorMessage message onRetry />`；`<SkeletonCard />`；`<Icon name size? />`；`design.css` 的 class 與 CSS variables。T11 消費這些。
+- Consumes: `EventItem`、`Country`、`SearchValue`（T8）；`useT`、`useLang`、`pickLabel`（T9）；`formatEventRange`、`formatPrice`、`withYear`、`withMonth`、`resetForCountry`（T8）。
+- Produces: `<SearchForm countries value onChange onSubmit loading disabled />`（`onSubmit(next?: SearchValue)`；`disabled: boolean` 是必填，countries 載完前為 `true`）；`<EventList events summary />`；`<EmptyState title hint testId? />`；`<ErrorMessage message onRetry />`；`<SkeletonCard />`；`<Icon name size? />`；`design.css` 的 class 與 CSS variables。T11 消費這些。
+  （v4 這一行漏了 `disabled` 與 `testId`，而實作裡兩者都是必要的。照這一行寫 T11 會型別錯誤。）
 
 **動工前先用瀏覽器開一次定案 POC**（`cd docs/poc && python3 -m http.server 8899`，
 開 `http://127.0.0.1:8899/20260719_155200_ui_design_v27.html`），切換 dark/light
@@ -2650,12 +2988,69 @@ export default function ErrorMessage({ message, onRetry }: { message: string; on
 }
 ```
 
-- [ ] **Step 7: `frontend/src/components/EventCard.tsx`**
+- [ ] **★ Step 7: 10a 的 checkpoint：三種狀態的畫面**
+
+把 `frontend/src/App.tsx` 暫時整份取代為：
+
+```tsx
+import EmptyState from "./components/EmptyState";
+import ErrorMessage from "./components/ErrorMessage";
+import SkeletonCard from "./components/SkeletonCard";
+
+export default function App() {
+  return (
+    <div className="min-h-screen p-8 space-y-8">
+      <div className="glass rounded-[40px] p-8">
+        <h2 className="mb-4 font-bold">loading</h2>
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <SkeletonCard /><SkeletonCard /><SkeletonCard />
+        </div>
+      </div>
+      <div className="glass rounded-[40px] p-8">
+        <h2 className="mb-4 font-bold">idle</h2>
+        <EmptyState title="選好條件後按搜尋" hint="挑一個地區、類別與月份" />
+      </div>
+      <div className="glass rounded-[40px] p-8">
+        <h2 className="mb-4 font-bold">error</h2>
+        <ErrorMessage message="資料來源暫時無法使用" onRetry={() => alert("retry")} />
+      </div>
+    </div>
+  );
+}
+```
+
+```bash
+make dev
+```
+
+開 `http://127.0.0.1:5173`，確認五項：
+
+1. 三個玻璃面板都是**真的透亮**（看得到背後的背景），不是灰底
+2. skeleton 有動畫，且含分隔線與票價列的骨架
+3. idle 與 error 各有一個虛線邊框容器與線條插圖，兩者長得不一樣
+4. 按 Tab 走一遍，**每個可聚焦元素都看得到 focus 環**（`:focus-visible` 有生效）
+5. 切 dark / light 兩個主題各看一次，兩邊都要是透亮玻璃不是換色
+
+第 4 項與第 5 項是最容易在後面才發現、而且發現時已經散落在九個元件裡的兩項。
+
+`Ctrl+C` 結束。這段 App.tsx 會被 10b 的 checkpoint 覆蓋，不是技術債。
+
+**10a 的 local 驗收：** 上面五項全過。
+
+---
+
+### Task 10b: 活動卡片與列表 ★ checkpoint
+
+做完這一段你會看到：用假資料排出來的卡片 grid，含時間區間與票價的實際排版。
+
+**10b 這一段只碰**：`EventCard.tsx`、`EventList.tsx`
+
+- [ ] **Step 1: `frontend/src/components/EventCard.tsx`**
 
 ```tsx
 import { useT } from "../i18n";
 import type { EventItem } from "../types";
-import { formatEventTime } from "../utils/format";
+import { formatEventRange, formatPrice } from "../utils/format";
 import Icon from "./Icon";
 
 // v27 的三組 banner：漸層底 + 白色線條幾何。依卡片序輪流，讓 grid 有節奏又不需要圖片資源
@@ -2712,24 +3107,31 @@ export default function EventCard({ event, index }: { event: EventItem; index: n
       </div>
       <div className="p-6">
         <h3 className="font-bold text-lg leading-snug mb-3 text-[var(--text)] group-hover:text-[var(--link)] transition-colors">
-          <a href={event.googleSearchUrl} target="_blank" rel="noreferrer">
+          <a href={event.googleSearchUrl} target="_blank" rel="noopener noreferrer">
             {event.title}
           </a>
         </h3>
         <p className="text-sm text-[var(--text-muted)] mb-2 flex items-center gap-2">
           <span className="opacity-70"><Icon name="calendar" size={16} /></span>
-          {formatEventTime(event.startTime)}
+          {/* 區間不是只有開始時間。展覽 88% 跨月，只顯示 startTime 會讓
+              查九月的人看到每張卡都寫 01/01，以為資料是舊的（spec §4）。 */}
+          {formatEventRange(event.startTime, event.endTime)}
         </p>
-        <a href={event.googleMapUrl} target="_blank" rel="noreferrer"
+        <a href={event.googleMapUrl} target="_blank" rel="noopener noreferrer"
           className="text-sm hover:underline flex items-start gap-2 mb-5" style={{ color: "var(--link)" }}>
           <span className="mt-0.5 opacity-70"><Icon name="pin" size={16} /></span>
           <span className="leading-relaxed">{event.locationName ?? event.location}</span>
         </a>
         <div className="flex items-center justify-between border-t border-[var(--panel-border-dim)] pt-4 mt-2">
-          {event.price && <p className="text-sm font-bold text-[var(--text)]">$ {event.price}</p>}
+          {/* 票價是自由文字。直接 `$ {price}` 會產出「$ 洽詢主辦單位」與「$ 0」。 */}
+          {formatPrice(event.price, t("event.free")) && (
+            <p className="text-sm font-bold text-[var(--text)]">
+              {formatPrice(event.price, t("event.free"))}
+            </p>
+          )}
           {/* 文案講清楚去向是 Google 搜尋結果。寫「詳細資訊」的話使用者會期待完整
               活動說明，點開發現是搜尋結果頁會覺得被丟包（spec §4） */}
-          <a href={event.googleSearchUrl} target="_blank" rel="noreferrer"
+          <a href={event.googleSearchUrl} target="_blank" rel="noopener noreferrer"
             className="text-xs font-bold px-3 py-1.5 rounded-full bg-[var(--surface-2)] text-[var(--text)] hover:bg-white/10 transition inline-flex items-center gap-1.5">
             {t("event.search")}
             <span aria-hidden="true">↗</span>
@@ -2741,7 +3143,7 @@ export default function EventCard({ event, index }: { event: EventItem; index: n
 }
 ```
 
-- [ ] **Step 8: `frontend/src/components/EventList.tsx`**
+- [ ] **Step 2: `frontend/src/components/EventList.tsx`**
 
 ```tsx
 import type { EventItem } from "../types";
@@ -2763,7 +3165,65 @@ export default function EventList({ events, summary }: { events: EventItem[]; su
 }
 ```
 
-- [ ] **Step 9: `frontend/src/components/SearchForm.tsx`**
+- [ ] **★ Step 3: 10b 的 checkpoint：卡片 grid**
+
+把 `frontend/src/App.tsx` 暫時整份取代為（三筆假資料刻意涵蓋三種時間與票價形態）：
+
+```tsx
+import EventList from "./components/EventList";
+import type { EventItem } from "./types";
+
+const FIXTURES: EventItem[] = [
+  { title: "同月多天的表演", startTime: "2026-07-12T19:30:00", endTime: "2026-07-14T21:30:00",
+    location: "臺北市中正區中山南路21-1號", locationName: "國家音樂廳", onSales: "Y",
+    price: "500", googleMapUrl: "https://example.com", googleSearchUrl: "https://example.com" },
+  { title: "跨月的常設展", startTime: "2026-01-01T09:00:00", endTime: "2026-12-31T18:00:00",
+    location: "臺北市士林區", locationName: "故宮", onSales: null,
+    price: "0", googleMapUrl: "https://example.com", googleSearchUrl: "https://example.com" },
+  { title: "沒有結束時間也沒有票價的活動", startTime: "2026-07-20T14:00:00", endTime: null,
+    location: "台北市信義區", locationName: null, onSales: null,
+    price: "洽詢主辦單位", googleMapUrl: "https://example.com", googleSearchUrl: "https://example.com" },
+];
+
+export default function App() {
+  return (
+    <div className="min-h-screen p-8">
+      <div className="glass rounded-[40px] p-8">
+        <EventList events={FIXTURES} summary="臺北 · 展覽 · 2026/07：3 筆活動" />
+      </div>
+    </div>
+  );
+}
+```
+
+```bash
+make dev
+```
+
+開 `http://127.0.0.1:5173`，確認五項：
+
+1. **第一張卡的時間是區間**（`07/12 19:30 – 07/14`），不是只有開始時間
+2. **第二張卡顯示 `2026/01/01 – 2026/12/31`**，跨月時有帶年份。
+   這是 88% 的展覽資料長的樣子，只顯示 `01/01` 的話使用者會以為資料是舊的
+3. **第三張卡只顯示開始時間**（`endTime` 為 `null` 不可以印出 `– null`）
+4. **票價三種形態各自正確**：`$ 500`、`免費`（不是 `$ 0`）、`洽詢主辦單位`（不是 `$ 洽詢主辦單位`）
+5. 手機 375px 單欄、桌機 1440px 三欄；hover 卡片時 banner 有慢速 zoom
+
+第 1 到 4 項是 v5 補的修正，特別確認。
+
+`Ctrl+C` 結束。
+
+**10b 的 local 驗收：** 上面五項全過。
+
+---
+
+### Task 10c: 搜尋卡 ★ checkpoint
+
+做完這一段你會看到完整的搜尋介面，而且四種狀態一次全部到齊。
+
+**10c 這一段只碰**：`SearchForm.tsx`
+
+- [ ] **Step 1: `frontend/src/components/SearchForm.tsx`**
 
 三個關鍵行為，寫錯任何一個都會讓使用者以為壞掉：
 
@@ -2797,7 +3257,7 @@ const COMING_SOON = [
   { code: "KR", label: { zh: "韓國", en: "Korea" } },
 ];
 
-// 四個快捷 chip，數量對齊 POC v27。key 是後端 provider 定義的 category id（T4 的 taiwan.py）。
+// 四個快捷 chip，數量對齊 POC v27。key 是後端 provider 定義的 category id（T5 的 taiwan.py）。
 // POC 示意的第四個是「市集」，但 MoC 沒有這個 category，改用「親子」配同一個 tent icon。
 const QUICK_CATEGORIES: { id: number; icon: IconName }[] = [
   { id: 6, icon: "frame" },   // 展覽
@@ -2827,7 +3287,10 @@ export default function SearchForm({ countries, value, onChange, onSubmit, loadi
   }
 
   const quickChips = QUICK_CATEGORIES.filter((q) =>
-    country?.categories.some((c) => c.value === q.id),
+    // 兩邊都套 String()。LabeledOption.value 的型別是 string | number，
+    // 而 QUICK_CATEGORIES 硬寫的是 number。後端哪天把 value 序列化成字串，
+    // 嚴格比對會讓整排 chip 靜默消失，沒有 error 也沒有 console warning（spec §4.3）。
+    country?.categories.some((c) => String(c.value) === String(q.id)),
   );
 
   return (
@@ -2948,9 +3411,22 @@ export default function SearchForm({ countries, value, onChange, onSubmit, loadi
 
       {/* 四個快捷 chip。點下去直接搜尋： 快捷就要一步到位，只改 state 不重搜
           會讓使用者以為篩選壞了（spec §4）。完整 12 個類別走上面的 <select>。 */}
-      <div className="flex flex-wrap gap-2.5 mb-8" data-testid="category-chips">
+      <div className="flex flex-wrap items-center gap-2.5 mb-8" data-testid="category-chips">
+        {/* 重設鈕。空結果的文案叫使用者「重設條件」，那個東西就必須存在——
+            v4 的文案寫了「清除篩選條件」而畫面上根本沒有這顆鈕。空結果是冷門搜尋
+            最常見的結果，所以那是全站最多人會讀到的一段字（spec §4）。
+            手機上手動改回四個 select 要點八下。 */}
+        <button
+          type="button"
+          disabled={loading || disabled}
+          onClick={() => onChange(resetForCountry(value, country!))}
+          className="chip btn-secondary flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium disabled:opacity-50"
+        >
+          <Icon name="refresh" size={16} />
+          {t("search.reset")}
+        </button>
         {quickChips.map((q) => {
-          const option = country!.categories.find((c) => c.value === q.id)!;
+          const option = country!.categories.find((c) => String(c.value) === String(q.id))!;
           const val = String(q.id);
           const active = value.category === val;
           return (
@@ -2973,7 +3449,7 @@ export default function SearchForm({ countries, value, onChange, onSubmit, loadi
 }
 ```
 
-- [ ] **★ Step 10: checkpoint：用死資料把四種畫面都看過一次**
+- [ ] **★ Step 2: 10c 的 checkpoint：用死資料把四種畫面都看過一次**
 
 四個 task 的視覺風險不可以全部堆到 T11 一次結算。這裡用一個丟棄式的 fixture 頁
 把 `SearchForm` / `SkeletonCard` / `EventList` / `EmptyState` / `ErrorMessage`
@@ -3059,18 +3535,33 @@ make dev
    兩個主題的玻璃都要是透亮的，不是只有換色
 7. 併排開 `docs/poc/20260719_155200_ui_design_v27.html` 比對配色與間距。
    POC 是 Tailwind v3、這裡是 v4，陰影（`shadow-sm` → `shadow-xs`）與
-   邊框預設色（v4 改成 `currentColor`）會有細微差異，看到就是這個原因（T7 Step 2）
+   邊框預設色（v4 改成 `currentColor`）會有細微差異，看到就是這個原因（T4 Step 2）
 
-第 2 項與第 1 項是這次補的 a11y 修正，特別確認。
+8. **「重設條件」鈕在 chip 那一列的最前面**，按下去四個欄位回到預設值。
+   空結果的文案叫使用者做這件事，那顆鈕就必須存在（spec §4）
 
-- [ ] **Step 11: Commit**
+第 1、2、8 項是 v5 補的修正，特別確認。
+
+- [ ] **Step 2b: 補一條 SearchForm 的純函式測試**
+
+`resetForCountry` 現在有兩個呼叫點（切國家、重設鈕），值得一條測試釘住它：
+
+```bash
+cd frontend && npm test
+```
+
+Expected: T8 寫的那組測試仍然全綠（`resetForCountry` 的行為沒變，只是多了一個呼叫點）。
+
+- [ ] **Step 3: Commit**
 
 ```bash
 cd frontend && npx tsc --noEmit
-git add frontend/src && git commit -m "feat: add glass design system and ui components with focus/aria fixes"
+git add frontend/src && git commit -m "feat: add search form with reset, quick chips, focus styles"
 ```
 
-**本 task 的 local 驗收：** 瀏覽器上四種狀態畫面都看得到，Tab 鍵看得到 focus 框。
+**10c 的 local 驗收：** 瀏覽器上四種狀態畫面都看得到，Tab 鍵看得到 focus 框，重設鈕會動。
+
+**T10 三段結束狀態：** 九個元件與 design system 全部到位，四種狀態都親眼看過。
 
 ---
 
@@ -3081,7 +3572,7 @@ git add frontend/src && git commit -m "feat: add glass design system and ui comp
 - Delete: `frontend/src/App.css`、`frontend/src/assets/react.svg`（scaffold 殘留物）
 
 **Interfaces:**
-- Consumes: T8–T10 的所有產出。
+- Consumes: T8、T9、T10a、T10b、T10c 的所有產出。
 - Produces: 完整 SPA：背景場景、桌機 icon rail / 手機頂部 bar（含語言切換）、
   dark/light 主題切換與持久化、搜尋 + about 兩個畫面、idle/loading/empty/success/error 五種狀態。
 
@@ -3137,7 +3628,7 @@ createRoot(document.getElementById("root")!).render(
    的 inline script 決定。
 
 ```tsx
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, fetchCountries, fetchEvents } from "./api";
 import EmptyState from "./components/EmptyState";
 import ErrorMessage from "./components/ErrorMessage";
@@ -3179,7 +3670,23 @@ function readTheme(): "dark" | "light" {
 export default function App() {
   const t = useT();
   const { lang } = useLang();
-  const [view, setView] = useState<"search" | "about">("search");
+  const [view, setView] = useState<"search" | "about">(
+    () => (location.hash === "#about" ? "about" : "search"),
+  );
+
+  // 切畫面要進 history，否則手機按返回鍵會直接離開網站（spec §4.3）。
+  // 這與 spec §1 排除的 shareable URL 是兩件事：那個排除的是把「搜尋條件」寫進網址。
+  const goto = useCallback((next: "search" | "about") => {
+    if (next === view) return;
+    history.pushState(null, "", next === "about" ? "#about" : "#");
+    setView(next);
+  }, [view]);
+
+  useEffect(() => {
+    const onPop = () => setView(location.hash === "#about" ? "about" : "search");
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  }, []);
   const [theme, setTheme] = useState<"dark" | "light">(readTheme);
   const [countries, setCountries] = useState<Country[]>([]);
   const [form, setForm] = useState<SearchValue>({
@@ -3221,19 +3728,35 @@ export default function App() {
     return () => ac.abort();
   }, [loadCountries]);
 
+  // 每次搜尋開一個 AbortController，新的搜尋先 abort 舊的。
+  //
+  // 不做的話：點展覽（cache miss，最多 15 秒）再點音樂（cache hit，200 毫秒），
+  // 音樂先渲染、展覽後到把畫面換掉，而音樂的 chip 還亮著。類別 chip 是直接觸發
+  // 搜尋的，所以這是一根手指就會走到的路徑（spec §4.3）。
+  // loadCountries 已經是這個寫法，這裡照抄。
+  const searchAbort = useRef<AbortController | null>(null);
+
   const handleSearch = useCallback(async (next?: SearchValue) => {
     const query = next ?? form;
     if (!query.country) return;  // countries 還沒載完，不要打出 /api/v1//events
+
+    searchAbort.current?.abort();
+    const ac = new AbortController();
+    searchAbort.current = ac;
+
     setStatus("loading");
     try {
       const result = await fetchEvents(query.country, {
         category: query.category,
         location: query.location,
         month: query.month,
-      });
+      }, ac.signal);
       setEvents(result.events);
       setStatus("success");
     } catch (err) {
+      // 被自己 abort 掉的請求不是錯誤，什麼都不要寫。
+      // 少了這個判斷，舊請求的 abort 會把新請求的 loading 畫面蓋成錯誤畫面。
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setErrorSource("search");
       // 存 error code 而不是翻譯過的字串：存字串的話之後切成 EN，
       // 畫面上那句錯誤訊息仍會是中文
@@ -3241,6 +3764,18 @@ export default function App() {
       setStatus("error");
     }
   }, [form]);
+
+  // loading 超過 8 秒換一段文案。冷機器加上上游 15 秒 timeout，最壞是 20 秒的
+  // 骨架動畫配一片安靜，手機使用者會重整，重整又從頭來（spec §4）。
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (status !== "loading") {
+      setSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlow(true), 8000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   const onRetry = useCallback(() => {
     if (errorSource === "countries") {
@@ -3305,11 +3840,11 @@ export default function App() {
         {/* 桌機左側 icon rail */}
         <aside className="glass hidden sm:flex flex-col items-center gap-3 rounded-full px-2.5 py-5 h-fit sticky top-6">
           <button type="button" aria-label={t("nav.search")} aria-pressed={view === "search"}
-            onClick={() => setView("search")} className={railBtn(view === "search")}>
+            onClick={() => goto("search")} className={railBtn(view === "search")}>
             <Icon name="search" />
           </button>
           <button type="button" aria-label={t("nav.about")} aria-pressed={view === "about"}
-            onClick={() => setView("about")} className={railBtn(view === "about")}>
+            onClick={() => goto("about")} className={railBtn(view === "about")}>
             <Icon name="info" />
           </button>
           <div className="w-6 h-px bg-[var(--panel-border-dim)] my-2" />
@@ -3330,11 +3865,11 @@ export default function App() {
             </h1>
             <div className="flex gap-1.5 shrink-0">
               <button type="button" aria-label={t("nav.search")} aria-pressed={view === "search"}
-                onClick={() => setView("search")} className={railBtn(view === "search", true)}>
+                onClick={() => goto("search")} className={railBtn(view === "search", true)}>
                 <Icon name="search" size={16} />
               </button>
               <button type="button" aria-label={t("nav.about")} aria-pressed={view === "about"}
-                onClick={() => setView("about")} className={railBtn(view === "about", true)}>
+                onClick={() => goto("about")} className={railBtn(view === "about", true)}>
                 <Icon name="info" size={16} />
               </button>
               <button type="button" aria-label={t("nav.theme")}
@@ -3347,21 +3882,24 @@ export default function App() {
 
           {view === "about" ? (
             <main className="glass rounded-[40px] p-6 sm:p-10 shadow-2xl">
-              <h2 className="text-2xl font-bold mb-5 text-[var(--text)]">{t("about.title")}</h2>
+              {/* 這個 <h1> 不可省。桌機的另一個 <h1> 關在下面的搜尋分支裡、
+                  手機那個是 sm:hidden，所以桌機開 About 時整份 DOM 最高只到 <h2>，
+                  靠標題階層瀏覽的螢幕閱讀器使用者會直接撞牆（spec §4.3）。 */}
+              <h1 className="text-2xl font-bold mb-5 text-[var(--text)]">{t("about.title")}</h1>
               <p className="text-base text-[var(--text-muted)] leading-relaxed mb-8 max-w-2xl">{t("about.body")}</p>
               <h3 className="font-bold text-lg mb-4 text-[var(--text)]">Tech Stack</h3>
               <div className="rounded-3xl overflow-hidden mb-8 border border-[var(--panel-border-dim)] divide-y divide-[var(--panel-border-dim)] max-w-2xl shadow-sm">
                 {TECH_STACK.map((item, i) => (
                   <div key={item.label} className={`flex p-4 text-sm ${i % 2 === 0 ? "bg-[var(--surface-2)]" : ""}`}>
                     <a className="w-48 shrink-0 font-bold text-[var(--text)] hover:underline"
-                      target="_blank" rel="noreferrer" href={item.url}>{item.label}</a>
+                      target="_blank" rel="noopener noreferrer" href={item.url}>{item.label}</a>
                     <span className="text-[var(--text-muted)]">{pickLabel(item.role, lang)}</span>
                   </div>
                 ))}
               </div>
               <p className="text-sm font-semibold text-[var(--text-muted)] pt-4 border-t border-[var(--panel-border-dim)]">
                 作者：
-                <a className="hover:underline transition" style={{ color: "var(--link)" }} target="_blank" rel="noreferrer"
+                <a className="hover:underline transition" style={{ color: "var(--link)" }} target="_blank" rel="noopener noreferrer"
                   href="https://github.com/taurus5650">GitHub</a>
               </p>
             </main>
@@ -3382,9 +3920,19 @@ export default function App() {
                 <EmptyState title={t("results.idleTitle")} hint={t("results.idleHint")} testId="state-idle" />
               )}
               {status === "loading" && (
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" data-testid="state-loading">
-                  <SkeletonCard /><SkeletonCard /><SkeletonCard />
-                </div>
+                <>
+                  {/* 8 秒後才出現。冷機器加上上游 15 秒 timeout，最壞是 20 秒的
+                      骨架動畫配一片安靜；手機使用者會以為站死了而重整，
+                      重整又從頭來一次（spec §4）。role="status" 讓螢幕閱讀器也聽得到。 */}
+                  {slow && (
+                    <p role="status" className="text-sm text-[var(--text-muted)] mb-4 text-center">
+                      {t("search.slow")}
+                    </p>
+                  )}
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" data-testid="state-loading">
+                    <SkeletonCard /><SkeletonCard /><SkeletonCard />
+                  </div>
+                </>
               )}
               {status === "error" && <ErrorMessage message={t(errorCode)} onRetry={onRetry} />}
               {status === "success" && events.length === 0 && (
@@ -3411,7 +3959,7 @@ npx tsc --noEmit && npm test && npm run build
 
 Expected: 全部乾淨。
 
-- [ ] **★ Step 5: checkpoint：手動 E2E，11 項**
+- [ ] **★ Step 5: checkpoint：手動 E2E，16 項**
 
 ```bash
 make dev
@@ -3435,8 +3983,15 @@ make dev
 10. **devtools 切到 375px**：rail 消失、頂部 bar 出現且**四顆按鈕都在（含語言切換）**、
     卡片單欄、搜尋膠囊改直向堆疊；1440px：三欄 grid
 11. 「關於」頁：tech stack 表 + GitHub 連結
+12. **語言持久化**：切成 EN → 重新整理 → 仍然是 EN（v4 只持久化了主題）
+13. **返回鍵**：進「關於」頁 → 按瀏覽器返回 → 回到搜尋頁，**不是離開網站**
+14. **快速連點兩個類別 chip**：最後停下來的那個 chip 是 active，
+    而且下方的卡片就是那個類別的。舊請求不可以後到把畫面蓋掉（AbortController）
+15. **About 頁在桌機寬度下有 `<h1>`**：devtools 的 Elements 搜尋 `h1`，要找得到一個
+16. **8 秒文案**：把 backend 停掉再啟動製造一次冷查詢，或直接在 devtools 的
+    Network 面板開 Slow 3G，確認等超過 8 秒時 skeleton 上方出現「第一次查詢比較慢」
 
-第 1、5、6、7、8、10 項是這次補的六個修正，特別確認。
+第 1、5、6、7、8、10 項是 v4 就有的驗收；第 12 到 16 項是 v5 補的修正，特別確認。
 
 `Ctrl+C` 結束。
 
@@ -3447,14 +4002,14 @@ git add frontend
 git commit -m "feat: assemble spa with idle state, theme persistence, source-aware retry"
 ```
 
-**本 task 的 local 驗收：** 上面 11 項全過。
+**本 task 的 local 驗收：** 上面 16 項全過。
 
 **Phase 3 結束狀態：** `make dev` 起得來，SPA 打新 `/api/v1` 全流程可用。
 
 ---
 ## Phase 4：prod image 與文件
 
-### Task 12: prod multi-stage Dockerfile + SPA 路由 + 本機 smoke test
+### Task 12: prod multi-stage Dockerfile + SPA 路由 + 本機 smoke test ★ checkpoint
 
 **Files:**
 - Create: `Dockerfile`（repo root）
@@ -3469,26 +4024,47 @@ git commit -m "feat: assemble spa with idle state, theme persistence, source-awa
 整份取代：
 
 ```python
+from django.http import Http404, HttpResponse
 from django.urls import include, path, re_path
-from django.views.generic import TemplateView
 
-spa = TemplateView.as_view(template_name="index.html")
+from .settings import FRONTEND_DIST
+
+_INDEX = FRONTEND_DIST / "index.html"
+
+
+def spa(request):
+    """回 Vite 產出的 index.html。
+
+    刻意不用 TemplateView：那會把 HTML 餵進 Django 的 template engine，
+    多出一條「這份 HTML 不能含 {{ 或 {%」的隱藏規則，而那規則不在任何錯誤訊息裡。
+    直接讀 bytes 沒有這個問題。
+
+    dist 不存在時回 404 而不是 500：dev 環境與只跑後端測試的 CI job 都沒有 dist，
+    讓它 500 的話會蓋掉真正的錯誤（spec §6.1）。
+    """
+    if not _INDEX.exists():
+        raise Http404("frontend not built")
+    return HttpResponse(_INDEX.read_bytes(), content_type="text/html")
+
 
 urlpatterns = [
     path("health", include("health.urls")),
     path("api/v1/", include("events.urls")),
     # 沒有 react-router，所以不需要真正的 SPA fallback routing。
     # 但少了 catch-all 的話，打錯字的網址會拿到 Django 的裸 404 純文字頁，
-    # 使用者會以為站掛了（spec §4）。成本是一行 regex。
-    re_path(r"^(?!api/|static/|health).*$", spa, name="spa"),
+    # 使用者會以為站掛了（spec §4）。
+    #
+    # 用裸的 ^.*$ 就好，不需要 negative lookahead：Django 由上往下依序比對，
+    # api/ 與 health 在上面已經被吃掉，static/ 由 WhiteNoise 的 middleware
+    # 在進到 urls 之前就攔截了。v4 那條 (?!api/|static/|health) 是重複防守，
+    # 而且是這份 plan 裡最難讀的一行。
+    re_path(r"^.*$", spa, name="spa"),
 ]
 ```
 
-`TEMPLATES.DIRS` 指向 `frontend/dist`，所以 `/` 是走 Django template engine 渲染
-Vite 產出的 `index.html`。**隱含約束：那份 HTML 不能含 `{{` 或 `{%`。**
-Vite 目前的產出沒有，但改 `index.html` 時要記得這件事。
+`FRONTEND_DIST` 在 settings 裡已經定義過（`STATICFILES_DIRS` 用同一個值）。
 
-dev 環境不受影響：`make dev` 的前端由 Vite dev server 服務，Django 只出 `/api`。
+dev 環境不受影響：`make dev` 的前端由 Vite dev server 服務，Django 只出 `/api` 與 `/health`。
 
 - [ ] **Step 2: 寫 root `Dockerfile`**
 
@@ -3564,9 +4140,10 @@ cd backend && DEBUG=True uv run python -m pytest . -v && cd ..
 
 Expected: 全綠。
 
-- [ ] **Step 5: 本機 prod-like container smoke test**
+- [ ] **★ Step 5: 本機 prod-like container smoke test（checkpoint）**
 
-這是唯一一次真實部署前的最後防線（spec §8）。
+這是唯一一次真實部署前的最後防線（spec §8）。下一個真的會動到 prod 的動作
+是 T16 的 cutover，而那一步沒有回頭路。這一步過不了就不要往下走。
 
 ```bash
 docker build -t cef-local .
@@ -3603,6 +4180,27 @@ curl -s "http://127.0.0.1:8080/api/v1/tw/events?category=6&location=%E8%87%BA%E5
 ```
 
 Expected: 第一個以 `[{"code":"tw"` 開頭；第二個是 `{"events": [...]}` 形狀的 JSON。
+
+確認 `public/` 的資產在 prod 拿得到（**只有 prod 會壞的一項**）：
+
+```bash
+# T4 的 scaffold 在 frontend/public/ 放了一個 favicon.svg
+curl -s -o /dev/null -w "public asset: %{http_code}\n" http://127.0.0.1:8080/static/favicon.svg
+```
+
+Expected: `public asset: 200`。`base: "/static/"` 只在 production build 生效，
+Vite 會改寫 `index.html` 裡的字面引用，但 JSX 裡 runtime 寫死的 `/foo.png`
+不會被加前綴。dev 一切正常、prod 404，而且沒有任何錯誤訊息（spec §6.1）。
+
+確認 hash 過的資產拿到 immutable cache header：
+
+```bash
+ASSET=$(curl -s http://127.0.0.1:8080/ | grep -o '/static/assets/index-[^"]*\.js' | head -1)
+curl -s -I "http://127.0.0.1:8080$ASSET" | grep -i cache-control
+```
+
+Expected: 含 `immutable`。若是 `max-age=60`，代表 settings 的
+`WHITENOISE_IMMUTABLE_FILE_TEST` 沒生效，回 T2 檢查那個函式。
 
 確認 gunicorn 真的是 gthread：
 
@@ -3682,10 +4280,55 @@ per country).
 ## Monitoring
 
 - `GET /health`：liveness only。**不碰外部依賴**，MoC 掛掉時它照樣回 200。
-- `GET /health/upstream`：讀 cache 裡的上游健康旗標。**uptime 監控要指向這一支。**
+  只夠給 Fly 的 health check 用，不要拿它當監控。
+- **uptime 監控打的是一個真實的搜尋 URL**，每 30 分鐘一次，對 HTTP 502 或
+  `"events": []` 告警。這是唯一會真的碰到上游、而且順便證明過濾邏輯還活著的做法。
 
-已知限制：machine 是 scale-to-zero，`fly logs` 只有即時串流，沒有歷史保存。
-使用者回報問題時附上的 `X-Request-ID` 目前無法拿來回查當時的 log。
+### 站看起來沒壞但查不到東西時，先看 meta
+
+每個搜尋回應都帶 `meta`，一個 curl 就分得出是誰的問題：
+
+```bash
+curl -s "https://taiwan-culture-event-info.fly.dev/api/v1/tw/events?category=6&location=臺北&month=2026-09" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['meta'])"
+```
+
+- `rawCount` 為 0 → 上游那邊就沒資料，或 MoC 改了回應格式
+- `rawCount` 大而 `matchedCount` 為 0 → 上游有資料但被本地過濾吃掉了，
+  查 `_matches()`（地名比對或區間重疊）
+- `cacheAge` 為 `null` → 這次是 cache miss，剛打過上游；有數字代表這份資料
+  已經在記憶體裡放了幾秒
+
+### 已知限制
+
+machine 是 scale-to-zero，`fly logs` 只有即時串流，沒有歷史保存。
+使用者回報問題時附上的 `X-Request-ID` **無法**拿來回查當時的 log。
+上面那個 `meta` 就是為了取代這件事而存在的。
+
+### 這幾樣東西不會自己告訴你該換掉了
+
+- `taiwan.py` 的 `verify=False` + `urllib3.disable_warnings`：MoC 的憑證缺
+  Subject Key Identifier，Python 3.13 拒連，所以關掉驗證。**這是 process 全域而且永久靜音的。**
+  哪天 MoC 修好憑證或換 host，沒有任何東西會通知你可以拿掉它
+- 20 個地區前綴與 12 個類別 id 是硬編的。MoC 增減縣市或類別時不會有錯誤，
+  只會有「使用者選不到」
+- health check 的 `Host` header 與 `ALLOWED_HOSTS` 兩處都寫死了
+  `taiwan-culture-event-info.fly.dev`。換自訂網域或搬 Cloud Run 時兩邊都要改，
+  漏一邊的症狀是「部署成功但全站 400」
+
+## Rollback
+
+**不要用 `fly deploy -i <sha>`。** 那個指令只換 image 不換 config，
+而本專案的 `internal_port` 從 8787 改成了 8080，所以換回舊 image 會得到
+「新 config 配舊 image」這個更壞的組合，指令會成功、站會繼續不通。
+
+真正的 rollback 是連 config 一起滾回：
+
+```bash
+git checkout pre-phase5-fly-config && fly deploy
+```
+
+要完整重 build，好幾分鐘。這是單機器就地替換換來的代價。
 
 ## Adding a country
 
@@ -3817,7 +4460,10 @@ primary_region = 'hkg'
     Host = 'taiwan-culture-event-info.fly.dev'
 
 [[vm]]
-  memory = '1gb'
+  # 256mb 給一個 gunicorn worker + LocMemCache 夠用，而且比 1gb 便宜得多。
+  # 若後端 checkpoint 量到單一 category 的資料大到裝不下（spec §10 的未量測項），
+  # 先加 LocMemCache 的 MAX_ENTRIES 再考慮加記憶體。
+  memory = '256mb'
   cpu_kind = 'shared'
   cpus = 1
 ```
@@ -3864,6 +4510,32 @@ fly config validate -c fly.toml
 
 Expected: `Configuration is valid`。
 
+> **這一步只驗語法，證不了這個 task 存在的任何一個理由。** port 對不對得上、
+> health check 的 `Host` header 會不會被 `ALLOWED_HOSTS` 擋，兩者都要到真的
+> 部署才現形。這是 Fly 的先天限制，不是可以補的驗收，所以下一步的 staging
+> 演練不是選配（spec §6.5）。
+
+- [ ] **Step 4b: 開一次性的 staging app 演練整條部署**
+
+```bash
+fly apps create cef-staging
+fly secrets set -a cef-staging SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
+# -e ALLOWED_HOSTS 不可省：不帶的話這場演練剛好跳過風險最高的那個變數，
+# 等於演了一場沒有主角的戲（spec §6.5）。
+flyctl deploy -a cef-staging -e ALLOWED_HOSTS=cef-staging.fly.dev
+```
+
+驗完再收掉：
+
+```bash
+curl -s -o /dev/null -w 'staging health: %{http_code}\n' https://cef-staging.fly.dev/health
+curl -s https://cef-staging.fly.dev/api/v1/countries | head -c 120; echo
+fly apps destroy cef-staging
+```
+
+Expected: `staging health: 200`，countries 以 `[{"code":"tw"` 開頭。
+兩者其一失敗就在 staging 上修到過，**不要拿現役 app 當試驗場**。
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -3894,6 +4566,12 @@ on:
   push:
     branches: [master]
   pull_request:
+
+# 單一 machine 就地替換，兩次快速 push 會讓兩個 flyctl deploy 對同一台機器賽跑。
+# cancel-in-progress 用在 deploy 上有風險（可能停在半途），所以只排隊不取消。
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test-backend:
@@ -3930,10 +4608,11 @@ jobs:
           for i in $(seq 1 15); do curl -sf http://localhost:8080/health && break || sleep 2; done
           curl -sf http://localhost:8080/ | grep -qi '<title>' || (echo "SPA index missing" && exit 1)
           curl -sf http://localhost:8080/api/v1/countries | grep -q '"tw"' || (echo "countries API broken" && exit 1)
-          # 連 events 的欄位名一起驗：後端改欄位名時，test-backend 與 test-frontend
-          # 各自定義同一份 contract，兩套測試會一起維持綠燈（spec §6.2）
-          curl -sf "http://localhost:8080/api/v1/tw/events?category=6&location=%E8%87%BA%E5%8C%97&month=$(date +%Y-%m)" \
-            | grep -q 'events' || (echo "events API broken" && exit 1)
+          # public/ 的資產只在 prod 會 404（base: "/static/" 只在 production build 生效）。
+          # 本機與 dev 都看不到這個問題，所以這裡是唯一的網子（spec §6.1）。
+          curl -sf -o /dev/null http://localhost:8080/static/favicon.svg || (echo "public asset 404 in prod build" && exit 1)
+          # catch-all 這條 route 只在有 frontend/dist 時才走得到，後端測試永遠碰不到它。
+          curl -sf -o /dev/null http://localhost:8080/some/typo/path || (echo "SPA catch-all broken" && exit 1)
       # 失敗時只看得到 curl 的非零離開碼，分不出是啟動失敗還是路由不對
       - name: Container logs on failure
         if: failure()
@@ -3959,6 +4638,13 @@ jobs:
   只有 Phase 6 遷 Cloud Run 才需要。
 - **沒有任何 `vars.GCP_*`**：那些是 Phase 6 才存在的 variables。
 - 測試路徑全部指向 `backend/`，取代舊版硬編 `culture/tests.py`、`tech_stack/tests.py`。
+
+**build-smoke 刻意不打真實的 MoC。** v4 讓它 curl events endpoint 再 `grep -q 'events'`，
+兩個問題：政府 API 一有狀況你的 pipeline 就紅燈且**擋住所有 deploy**（包含緊急修正）；
+而且 `grep -q 'events'` 對 `{"events": []}` 也會過，正是 spec §8.1 明文拒絕的通過條件
+——一個永遠會過的檢查比沒有檢查更糟，因為它看起來像有在把關。
+contract 漂移由 `test-backend` 的 `responses` mock 負責，真實 MoC 的驗證留在
+T7 的 checkpoint 與 T16 Step 3 這兩個人工關卡。
 
 - [ ] **Step 2（OWNER）：取得 `FLY_API_TOKEN` 並設進 GitHub repo secret**
 
@@ -4003,7 +4689,7 @@ Expected: PR 建立後 Actions 出現一個 run，`test-backend`、`test-fronten
 
 ---
 
-### Task 16: prod cutover + 驗證 + uptime check
+### Task 16: prod cutover + 驗證 + uptime check ★ checkpoint
 
 > ⚠️ **Step 2 是 prod 正式切換點，不是 dry-run。** 這一步之後現網從 Jinja2 舊站
 > 變成新 SPA。若 PORT、SECRET_KEY、ALLOWED_HOSTS 任一出錯，舊 machine 已被替換，
@@ -4016,18 +4702,41 @@ Expected: PR 建立後 Actions 出現一個 run，`test-backend`、`test-fronten
 - Consumes: T14 的 `fly.toml`、T15 已綠燈的 CI
 - Produces: 有真實流量、有監控的 prod
 
-- [ ] **Step 1: cutover 前的三項確認**
+- [ ] **Step 1: cutover 前的四項確認**
 
-三項都要親眼看到，缺一不可：
+四項都要親眼看到，缺一不可：
 
 ```bash
 grep -A6 'http_service.checks' fly.toml     # 1. health check 在，而且有 Host header
 fly secrets list -a taiwan-culture-event-info | grep SECRET_KEY   # 2. secret 在
 fly config validate -c fly.toml             # 3. config 合法
+git tag | grep pre-phase5-fly-config        # 4. rollback 的 tag 在
 ```
 
 Expected: 第一個印出含 `path = '/health'` 與 `Host =` 的區塊；第二個有一行 `SECRET_KEY`；
-第三個是 `Configuration is valid`。
+第三個是 `Configuration is valid`；第四個印出那個 tag 名字。
+
+**第 4 項是這一步唯一的保險。** 本專案的 rollback **不是** `fly deploy -i <sha>`：
+`internal_port` 從 8787 改成了 8080，換回舊 image 會得到「新 config 配舊 image」，
+指令會成功、站會繼續不通。真正的路徑是 `git checkout pre-phase5-fly-config && fly deploy`，
+要完整重 build，好幾分鐘（spec §6.5）。tag 不在就先補上再往下走。
+
+- [ ] **Step 1b: 暫時擴到兩台，縮短切換的停機**
+
+單一 machine 就地替換，最少停 10 到 30 秒，失敗的話沒有上限。
+
+```bash
+fly scale count 2 -a taiwan-culture-event-info
+```
+
+驗證通過之後（Step 3 之後）縮回一台：
+
+```bash
+fly scale count 1 -a taiwan-culture-event-info
+```
+
+**不可以長期維持兩台**：LocMemCache 是 per-process，兩台各持一份 cache，
+spec §3.3 的「每 12 小時最多打 12 次上游」上界會直接破功。這只是切換期間的暫時措施。
 
 **若想無風險演練**，先開一個一次性的 app 打：
 
@@ -4059,19 +4768,28 @@ health state 變成 `passing`）。
 
 在本機修到過為止再進 Step 3。
 
-- [ ] **Step 3: 用 `curl` 驗證，不能只靠瀏覽器**
+- [ ] **★ Step 3: 用 `curl` 驗證，不能只靠瀏覽器（checkpoint）**
 
 瀏覽器可能吃到快取，看起來正常但其實打到的是舊 revision。
 
+**這一步是整份 plan 裡兩個靜默殺手唯一被證明的時刻**：`ENV PORT` 有沒有對上
+`internal_port`、health check 的 `Host` header 會不會被 `ALLOWED_HOSTS` 擋。
+T14 的 `fly config validate` 只驗語法，兩者都驗不到（Global Constraints）。
+
 ```bash
-curl -s -o /dev/null -w 'health: %{http_code}\n' https://taiwan-culture-event-info.fly.dev/health
-curl -s -o /dev/null -w 'upstream: %{http_code}\n' https://taiwan-culture-event-info.fly.dev/health/upstream
-curl -s https://taiwan-culture-event-info.fly.dev/ | grep -o '<title>[^<]*'
-curl -s https://taiwan-culture-event-info.fly.dev/api/v1/countries | head -c 200; echo
+H=https://taiwan-culture-event-info.fly.dev
+curl -s -o /dev/null -w 'health: %{http_code}\n' $H/health
+curl -s $H/ | grep -o '<title>[^<]*'
+curl -s $H/api/v1/countries | head -c 200; echo
+# 真實搜尋：這是監控之後要打的那一條，先手動確認它會回 200 且不是空陣列
+curl -s "$H/api/v1/tw/events?category=6&location=%E8%87%BA%E5%8C%97&month=$(date +%Y-%m)" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('meta:', d['meta']); assert len(d['events'])>0, 'FAIL: 空陣列'"
 ```
 
-Expected: `health: 200`；`upstream: 200`；Vite 的 `<title>`；以 `[{"code":"tw"` 開頭的 JSON。
+Expected: `health: 200`；Vite 的 `<title>`；以 `[{"code":"tw"` 開頭的 JSON；
+最後一行印出 meta 且不 assert 失敗。
 若 countries 回 400 加 `DisallowedHost` 字樣，代表 `ALLOWED_HOSTS` 沒生效，回 T14 Step 2。
+若 health 打不到但 `fly deploy` 剛才回報成功，那就是 port 沒對齊，回 T14 Step 2。
 
 - [ ] **Step 4: 驗證 cache 真的有生效**
 
@@ -4109,7 +4827,7 @@ git push origin master
 1. 出現卡片列表（或正確的空結果畫面），不是白畫面
 2. 卡片欄位：活動名稱、時間、地點、票價、售票 badge：都有正常顯示，
    沒有 `undefined` 或空白。有欄位空掉的話先 `curl` `/api/v1/tw/events?...`
-   看原始 JSON，跟 T4 `test_providers.py` 的 mock fixture 比對是哪個欄位改了名
+   看原始 JSON，跟 T5 `test_providers.py` 的 mock fixture 比對是哪個欄位改了名
 3. **捲動與卡片 hover 順不順。** `.glass` 是 `blur(40px)` 的全螢幕面板加兩顆 36px 光暈，
    低階 Android 可能掉幀甚至白屏，而先前只在 mac 上驗證過（spec §10）。
    若明顯卡頓，照 `design.css` 頂部註解的降級出口改一次
@@ -4127,17 +4845,33 @@ git commit -m "docs: fill in live url after fly.io deployment verified"
 git push origin master
 ```
 
-- [ ] **Step 8: 設定 uptime check，指向 `/health/upstream`**
+- [ ] **Step 8: 設定 uptime check：一個 monitor，30 分鐘，打真實搜尋 URL**
 
-到 UptimeRobot（或同類免費服務）建立 **兩個** HTTP(s) monitor：
+到 UptimeRobot（或同類免費服務）建立**一個** HTTP(s) monitor：
 
-1. URL `https://taiwan-culture-event-info.fly.dev/health`：站活著沒
-2. URL `https://taiwan-culture-event-info.fly.dev/health/upstream`：資料源活著沒
+- URL：`https://taiwan-culture-event-info.fly.dev/api/v1/tw/events?category=6&location=臺北&month=<當月>`
+- Interval：**30 分鐘**
+- 告警條件：HTTP 502，以及回應內容含 `"events":[]`
+  （UptimeRobot 的 keyword monitor 選「keyword exists → down」）
+- Alert 寄自己的 email
 
-兩個都設 5 分鐘 interval、alert 寄自己的 email。
-
-**只監控 `/health` 是不夠的**：它不碰任何外部依賴，MoC 掛掉時照樣回 200，
+**為什麼不是 `/health`：** 它不碰任何外部依賴，MoC 掛掉時照樣回 200，
 你會完全不知道站已經沒用，要等朋友抱怨（spec §3.4）。
+
+**為什麼不是 v4 的 `/health/upstream`：** 那個 endpoint 已經移除。它讀的旗標
+只在 cache miss 的路徑上被寫（沒人搜尋就永遠不會亮）、放在 LocMemCache
+（machine 一停就清空）、而監控讀的是唯讀 cache view（整條鏈路沒有一段真的碰上游）。
+三個理由任一個都足以讓它永遠回綠燈。
+
+**為什麼是 30 分鐘不是 5 分鐘：** `min_machines_running = 0` 這個省錢設定要成立，
+前提是機器真的會停。每 5 分鐘打一次會讓它 24 小時醒著，等於付了常開的錢
+卻拿到 scale-to-zero 的冷啟動體驗。v4 排的是兩個 5 分鐘的 monitor，正是這個組合。
+
+**這個選擇的代價，要接受：** 機器停著的時候，使用者第一次搜尋最壞要等 20 秒
+（冷啟動加上上游 15 秒 timeout），而且 cache 是空的。T11 的「loading 超過 8 秒
+換文案」就是為這個情境寫的。（owner 於 2026-08-23 選定省錢方案。
+要改成常開的話：`min_machines_running = 1` + monitor 頻率隨意，
+代價是持續計費，好處是 cache 保溫且 health check 真的會跑。）
 
 Expected: 建立後幾分鐘內兩個 monitor 都顯示 `Up`。
 
@@ -4206,7 +4940,36 @@ Terraform 檔案與 `docs/deployment/gcp-setup.md` 的完整內容，留到該 b
 
 ---
 
-## 附錄：v3 → v4 的 task 對照
+## 附錄：v4 → v5 的 task 對照
+
+| v5 | Phase | 內容 | v4 對應 | 為什麼動 |
+|---|---|---|---|---|
+| T1 | 1 | uv 遷移 | T1 | 不變 |
+| T2 | 1 | 清理 + 重構 + 全新 settings ★ | T2 | 加 ★（第一個不可逆點）、`pytest.ini` 加 `python_files`、刪檔加 `--ignore-unmatch`、WhiteNoise immutable test |
+| T3 | 1 | dev docker-compose | T3 | `uv run --frozen --no-sync`、compose 加 `user:`、`make test` 拆兩半 |
+| T4 | 1 | 前端 scaffold ★ | **T7** | 提前到 Phase 1，讓 `make test` 全程可用；proxy 驗收改打 `/health` |
+| T5 | 2 | providers | **T4** | 加 `isinstance(payload, list)` 守衛、log 移到 raise 之前 |
+| T6 | 2 | services | **T5** | 回傳改 `(events, meta)`、加 negative caching、加 cache hit/miss log、移除 upstream 旗標 |
+| T7 | 2 | API + checkpoint ★ | **T6** | `isascii()`、月份 regex 收斂、location 先正規化、回傳帶 `meta`、移除 `/health/upstream` |
+| T8 | 3 | types / api / utils | T8 | 加 `formatEventRange`、`formatPrice` |
+| T9 | 3 | i18n | T9 | 語言持久化、拿掉 LanguageSwitch 的 `aria-label`、**驗收從 `tsc --noEmit` 改成三條 Vitest** |
+| T10a | 3 | design system + 狀態元件 ★ | T10 前半 | 拆出來，自己一個 checkpoint |
+| T10b | 3 | 卡片與列表 ★ | T10 中段 | 拆出來；卡片顯示時間區間與票價三形態 |
+| T10c | 3 | 搜尋卡 ★ | T10 後半 | 拆出來；加「重設條件」鈕、chip 比對套 `String()` |
+| T11 | 3 | App 組裝 ★ | T11 | 搜尋加 `AbortController`、About 補 `<h1>`、返回鍵進 history、8 秒慢速文案 |
+| T12 | 4 | prod Dockerfile + SPA 路由 ★ | T12 | catch-all 改純 view 不走 template engine、加 ★、smoke test 加 public asset 與 cache header |
+| T13 | 4 | repo 改名 + README | T13 | README 加 meta 排查段、rollback 真實路徑、會腐爛清單 |
+| T14 | 5 | fly.toml + health check | T14 | 記憶體 1gb 改 256mb、加 staging 演練（含 `ALLOWED_HOSTS`） |
+| T15 | 5 | CI 重寫 | T15 | 加 `concurrency`、拿掉打真實 MoC 的探針、加 public asset 與 catch-all 探針 |
+| T16 | 5 | prod cutover ★ | T16 | 加 rollback tag 確認、切換前後 `fly scale count`、監控改成一個 30 分鐘的真實搜尋 URL |
+
+**v5 沒有處理的三件事**（review 提出，屬於會改變視覺或功能的決策，等 owner 拍板）：
+裝飾用 SVG 約 150 行、i18n 的雙語 label schema 約 60 行、
+`COMING_SOON` 日韓 chip 與四個類別快捷 chip 約 70 行。
+
+---
+
+## 附錄：v3 → v4 的 task 對照（承襲自 v4，僅供追溯）
 
 僅供追溯，執行時不需開啟 v3。
 
@@ -4215,11 +4978,11 @@ Terraform 檔案與 `docs/deployment/gcp-setup.md` 的完整內容，留到該 b
 | T1 | 1 | uv 遷移 | v3 T1（拿掉 Step 6-8 的 dev Dockerfile 改寫，那份檔案在 v4 不存在） |
 | T2 | 1 | 清理 + 重構 backend/config + 全新 settings | v3 T11 + T12 合併並前移（settings 只寫一次而不是三次） |
 | T3 | 1 | dev docker-compose（僅 backend） | v3 T2（venv 移出 bind mount、加 dev-reset、frontend service 延後） |
-| T4 | 2 | providers | v3 T3（補 22 縣市、異體字正規化、timeout 測試、格式漂移訊號） |
-| T5 | 2 | services | v3 T4（月份改區間重疊、加上游健康旗標、端到端測試） |
-| T6 | 2 | API + checkpoint | v3 T5（白名單驗證、404 移到 view、checkpoint 不接受空陣列） |
-| T7 | 3 | 前端 scaffold + compose frontend service | v3 T2 後半 + T6（resolveJsonModule、vitest config、polling 改 vite.config） |
-| T8 | 3 | types / api / utils | v3 T7（currentMonth 改本地時區、抽出 search.ts 純函式、AbortSignal） |
+| T5 | 2 | providers | v3 T3（補 22 縣市、異體字正規化、timeout 測試、格式漂移訊號） |
+| T6 | 2 | services | v3 T5（月份改區間重疊、加上游健康旗標、端到端測試） |
+| T7 | 2 | API + checkpoint | v3 T6（白名單驗證、404 移到 view、checkpoint 不接受空陣列） |
+| T4 | 3 | 前端 scaffold + compose frontend service | v3 T2 後半 + T7（resolveJsonModule、vitest config、polling 改 vite.config） |
+| T8 | 3 | types / api / utils | v3 T4（currentMonth 改本地時區、抽出 search.ts 純函式、AbortSignal） |
 | T9 | 3 | i18n | v3 T8（加 html lang 同步、LanguageSwitch 的 small 變體） |
 | T10 | 3 | UI 元件 + checkpoint | v3 T9（focus ring、chevron、live region、4 個 chip、fixture 頁 checkpoint） |
 | T11 | 3 | App 組裝 + checkpoint | v3 T10（idle 畫面、主題持久化、依來源重試、手機語言切換） |
